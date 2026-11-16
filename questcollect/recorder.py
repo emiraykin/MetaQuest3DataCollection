@@ -6,33 +6,29 @@ One HDF5 file per episode (data/episodes/episode_XXXXXX.hdf5). Keys are dataset 
 
 meta (file attrs): schema_version, task, instruction, operator, input_mode, success, fps, seed,
                    created_at, duration_s, num_steps, model_xml, config_yaml, camera_names, objects,
-                   tower (JSON: bricks bottom-up with studs/height/color/mass, per-level offsets, clutch
-                   pairs and limits)
+                   cups (JSON: cups bottom-up with color, cup radii/height, nesting height)
 
 /time                         (T,)        sim time [s]
 /wall_time                    (T,)        host monotonic time [s]
-/obs/joint_pos                (T, 14)     [left 7, right 7] rad
-/obs/joint_vel                (T, 14)
-/obs/gripper_width            (T, 2)      finger opening [m] (0 .. 0.08)
-/obs/ee_pose_left             (T, 7)      tcp [x y z qw qx qy qz] world
-/obs/ee_pose_right            (T, 7)
-/obs/objects                  (T, 4, 7)   brick poses, bottom-centre of each brick, order = meta objects
+/obs/joint_pos                (T, 7)      rad
+/obs/joint_vel                (T, 7)
+/obs/gripper_width            (T, 1)      finger opening [m] (0 .. 0.08)
+/obs/ee_pose                  (T, 7)      tcp [x y z qw qx qy qz] world
+/obs/objects                  (T, 3, 7)   cup poses, bottom-centre of each cup, order = meta objects
                                           (privileged, sim only)
-/action/joint_pos             (T, 16)     [7 L joints, grip L, 7 R joints, grip R]; grip in [0 closed, 1 open]
-/action/ee_pose               (T, 16)     [L xyz qwxyz, R xyz qwxyz, grip L, grip R] IK targets
-/sim/state                    (T, S)      mj_getState(mjSTATE_INTEGRATION) before the step, then the 6 clutch
-                                          welds' relative poses (6 x 7); BimanualEnv.set_state restores both
-/success                      (T,)        task success predicate per step (tower complete and released)
-/progress                     (T,)        bricks correctly stacked and clicked in on the base so far (0..3)
-/clutch                       (T, 6)      which brick pairs are clicked together (order = meta tower.clutch_pairs)
+/action/joint_pos             (T, 8)      [7 joints, grip]; grip in [0 closed, 1 open]
+/action/ee_pose               (T, 8)      [xyz qwxyz, grip] IK target
+/sim/state                    (T, S)      mj_getState(mjSTATE_INTEGRATION) before the step; PandaEnv.set_state
+/success                      (T,)        task success predicate per step (stack complete and released)
+/progress                     (T,)        cups correctly stacked on the base so far (0..2)
 /teleop/head                  (T, 7)      XR head pose [x y z qx qy qz qw]
 /teleop/{left,right}/source   (T,)        0 none, 1 controller, 2 hand
 /teleop/{left,right}/pose     (T, 7)      raw XR control pose
 /teleop/{left,right}/buttons  (T, 8)
 /teleop/{left,right}/joints   (T, 25, 7)  WebXR hand joints (zeros for controllers)
 /teleop/{left,right}/pinch    (T, 2)
-/teleop/engaged               (T, 2)
-/teleop/tracked               (T, 2)
+/teleop/engaged               (T, 1)      the arm's clutch (right controller/hand)
+/teleop/tracked               (T, 1)
 /teleop/rtt_ms                (T,)
 
 Camera images are not stored: sim/state replays the episode exactly, and the exporter re-renders them.
@@ -50,10 +46,9 @@ import h5py
 import numpy as np
 import yaml
 
-from questcollect.sim import (BRICK_H, BRICKS, CLUTCH_PAIRS, CLUTCH_PRESS_N, CLUTCH_PULL_N, INSTRUCTION, OBJECTS, PITCH,
-                              TASK, TOWER)
+from questcollect.sim import (CUP_H, CUP_R_BOTTOM, CUP_R_TOP, CUPS, INSTRUCTION, NEST_DZ, OBJECTS, TASK)
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 AUTO_STOP_TAIL_S = 1.0
 
 
@@ -217,12 +212,8 @@ class Recorder:
             "config_yaml": yaml.safe_dump(self.cfg.model_dump()),
             "camera_names": list(self.cfg.record.cameras),
             "objects": list(OBJECTS),
-            "tower": {"pitch": PITCH, "brick_height": BRICK_H,
-                      "bricks": [{"name": b.name, "studs": [b.nx, b.ny], "height": b.nz, "rgba": list(b.rgba),
-                                  "mass": b.mass} for b in BRICKS],
-                      "levels": [{"dx": dx, "dy": dy, "yaw": dyaw} for dx, dy, dyaw in TOWER],
-                      "clutch_pairs": [list(pair) for pair in CLUTCH_PAIRS],
-                      "clutch_press_n": CLUTCH_PRESS_N, "clutch_pull_n": CLUTCH_PULL_N},
+            "cups": {"r_bottom": CUP_R_BOTTOM, "r_top": CUP_R_TOP, "height": CUP_H, "nest_dz": NEST_DZ,
+                     "cups": [{"name": c.name, "rgba": list(c.rgba)} for c in CUPS]},
         }
         self._pending = self._writer.submit(write_episode, path, self.steps, meta)
         self.saved_count += 1

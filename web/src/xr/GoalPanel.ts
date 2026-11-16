@@ -41,10 +41,10 @@ export class GoalPanel {
     const listH = 44 * t.goal.length + 16;
     drawGoal(g, t, states, { x: pad, y: pad + 50, w: w - 2 * pad, h: h - 2 * pad - 50 - listH }, 1);
 
-    // One row per brick, in build order (top of the list = bottom of the tower).
+    // One row per cup, in stacking order (top of the list = bottom of the stack).
     let y = h - pad - listH + 26;
     t.goal.forEach((e, k) => {
-      const b = t.bricks[e.brick], st = states[k];
+      const b = t.cups[e.cup], st = states[k];
       const [r, gg, bb] = b.rgba.map((v) => Math.round(v * 255));
       g.fillStyle = `rgb(${r},${gg},${bb})`;
       g.globalAlpha = st === "todo" ? 0.4 : 1;

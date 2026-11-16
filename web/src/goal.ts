@@ -1,6 +1,6 @@
-// Draws the mission's goal structure (from TaskSpec) as a small 3D-looking picture on a 2D canvas.
-// Shared by the headset's goal panel and the dashboard. Nothing here knows the tower's shape: it draws
-// whatever bricks and placements the server describes, so a new mission shows up without client changes.
+// Draws the mission's goal stack (from TaskSpec) as a small 3D-looking picture on a 2D canvas.
+// Shared by the headset's goal panel and the dashboard. Nothing here knows the stack's order: it draws
+// whatever cups and placements the server describes, so a new mission shows up without client changes.
 
 import type { TaskSpec } from "./protocol";
 
@@ -13,8 +13,8 @@ export function levelStates(task: TaskSpec, progress: number, inArea: boolean): 
   return placed.map((p, k) => (p ? "placed" : k === next ? "next" : "todo"));
 }
 
-/** Bricks placed so far (the base counts once it is in the area), the same count as levelStates. */
-export function bricksPlaced(progress: number, inArea: boolean): number {
+/** Cups placed so far (the base counts once it is in the area), the same count as levelStates. */
+export function cupsPlaced(progress: number, inArea: boolean): number {
   return inArea ? 1 + progress : 0;
 }
 
@@ -23,6 +23,7 @@ const EL = 0.6, AZ = -0.65; // view: from above (34°) and from the operator's r
 const D: V3 = [Math.cos(EL) * Math.cos(AZ), Math.cos(EL) * Math.sin(AZ), -Math.sin(EL)]; // view direction
 const R: V3 = norm([D[1], -D[0], 0]); // screen right = d x z
 const U: V3 = cross(R, D); // screen up
+const RING = 48; // points per drawn circle
 
 function norm(v: V3): V3 { const n = Math.hypot(...v); return [v[0] / n, v[1] / n, v[2] / n]; }
 function cross(a: V3, b: V3): V3 { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
@@ -33,30 +34,25 @@ function shade(rgba: number[], k: number, alpha: number) {
   return `rgba(${c(0)},${c(1)},${c(2)},${alpha})`;
 }
 
-interface Placed { k: number; size: V3; studs: [number, number]; rgba: number[]; pos: V3; yaw: number }
+function ring(c: V3, r: number): V3[] {
+  return Array.from({ length: RING }, (_, i) => {
+    const a = (2 * Math.PI * i) / RING;
+    return [c[0] + r * Math.cos(a), c[1] + r * Math.sin(a), c[2]] as V3;
+  });
+}
 
 /** Draw the goal into the box (x, y, w, h) of a canvas context. */
 export function drawGoal(g: CanvasRenderingContext2D, task: TaskSpec, states: LevelState[],
   box: { x: number; y: number; w: number; h: number }, pulse = 1) {
-  const items: Placed[] = task.goal.map((e, k) => {
-    const b = task.bricks[e.brick];
-    return { k, size: b.size, studs: b.studs, rgba: b.rgba, pos: e.pos, yaw: e.yaw };
-  });
-  const world = (it: Placed, lx: number, ly: number, lz: number): V3 => {
-    const c = Math.cos(it.yaw), s = Math.sin(it.yaw);
-    return [it.pos[0] + c * lx - s * ly, it.pos[1] + s * lx + c * ly, it.pos[2] + lz];
-  };
-  const corners = (it: Placed, z: number): V3[] => {
-    const [sx, sy] = [it.size[0] / 2, it.size[1] / 2];
-    return [[-sx, -sy], [sx, -sy], [sx, sy], [-sx, sy]].map(([a, b]) => world(it, a, b, z));
-  };
+  const { r_bottom: rb, r_top: rt, height: ch } = task.cup;
+  const items = task.goal.map((e, k) => ({ k, rgba: task.cups[e.cup].rgba, pos: e.pos as V3 }));
 
-  // Fit the structure into the box. The build area is drawn as a taped square hugging the base (the real
-  // one is larger; fitting it would shrink the bricks to nothing).
-  const base = items[0], m = 0.35 * Math.max(base.size[0], base.size[1]);
-  const [ax, ay] = [Math.min(task.area.half[0], base.size[0] / 2 + m), Math.min(task.area.half[1], base.size[1] / 2 + m)];
-  const floor: V3[] = [[-ax, -ay, 0], [ax, -ay, 0], [ax, ay, 0], [-ax, ay, 0]].map(([x, y]) => world(base, x, y, 0));
-  const pts = [...floor, ...items.flatMap((it) => [...corners(it, 0), ...corners(it, it.size[2] + task.stud_h)])];
+  // Fit the stack into the box. The build area is drawn as a taped square hugging the base (the real
+  // one is larger; fitting it would shrink the cups to nothing).
+  const base = items[0].pos, m = 1.35 * rt;
+  const [ax, ay] = [Math.min(task.area.half[0], m), Math.min(task.area.half[1], m)];
+  const floor: V3[] = [[-ax, -ay], [ax, -ay], [ax, ay], [-ax, ay]].map(([x, y]) => [base[0] + x, base[1] + y, base[2]]);
+  const pts = [...floor, ...items.flatMap((it) => ring([it.pos[0], it.pos[1], it.pos[2] + ch], rt))];
   const sx = pts.map((p) => dot(p, R)), sy = pts.map((p) => -dot(p, U));
   const minX = Math.min(...sx), maxX = Math.max(...sx), minY = Math.min(...sy), maxY = Math.max(...sy);
   const scale = Math.min(box.w / (maxX - minX), box.h / (maxY - minY)) * 0.92;
@@ -64,7 +60,7 @@ export function drawGoal(g: CanvasRenderingContext2D, task: TaskSpec, states: Le
   const P = (p: V3): [number, number] => [ox + dot(p, R) * scale, oy - dot(p, U) * scale];
   const poly = (ps: V3[]) => { g.beginPath(); ps.forEach((p, i) => (i ? g.lineTo(...P(p)) : g.moveTo(...P(p)))); g.closePath(); };
 
-  // The build area: the base brick has to lie inside this taped square.
+  // The build area: the base cup has to stand inside this taped square.
   poly(floor);
   g.fillStyle = "rgba(235,235,225,0.06)";
   g.fill();
@@ -74,53 +70,33 @@ export function drawGoal(g: CanvasRenderingContext2D, task: TaskSpec, states: Le
   g.stroke();
   g.setLineDash([]);
 
-  // Painter's order: lower bricks first, then farther ones.
-  const order = items.slice().sort((a, b) => a.pos[2] - b.pos[2] || dot(b.pos, D) - dot(a.pos, D));
-  for (const it of order) {
+  // Bottom cup first: each nested cup covers the inside of the one below.
+  for (const it of items) {
     const st = states[it.k];
     const alpha = st === "todo" ? 0.25 : 1;
-    const h = it.size[2];
-    const bot = corners(it, 0), top = corners(it, h);
-    // Visible side faces (outward normal facing the viewer).
-    for (let i = 0; i < 4; i++) {
-      const j = (i + 1) % 4;
-      const mid = [0, 1, 2].map((a) => (bot[i][a] + bot[j][a]) / 2 - it.pos[a]) as V3;
-      mid[2] = 0;
-      if (dot(mid, D) >= 0) continue;
-      poly([bot[i], bot[j], top[j], top[i]]);
-      g.fillStyle = shade(it.rgba, Math.abs(mid[0]) > Math.abs(mid[1]) ? 0.72 : 0.58, alpha);
-      g.fill();
-    }
-    poly(top);
-    g.fillStyle = shade(it.rgba, 1.0, alpha);
+    const bot = ring(it.pos, rb), top = ring([it.pos[0], it.pos[1], it.pos[2] + ch], rt);
+    // Side wall: the near half of the rim and of the bottom circle (points facing the viewer).
+    const near = (i: number) => dot([Math.cos((2 * Math.PI * i) / RING), Math.sin((2 * Math.PI * i) / RING), 0], D) < 0;
+    const idx = Array.from({ length: RING }, (_, i) => i);
+    const start = idx.find((i) => near(i) && !near((i + RING - 1) % RING)) ?? 0;
+    const front = idx.map((i) => (start + i) % RING).filter(near);
+    const side = () => poly([...front.map((i) => bot[i]), ...front.slice().reverse().map((i) => top[i])]);
+    side();
+    g.fillStyle = shade(it.rgba, 0.72, alpha);
     g.fill();
-    // Studs, far to near.
-    const [nx, ny] = it.studs, p = task.pitch, r = task.stud_r * scale, ry = r * Math.sin(EL);
-    const studs: V3[] = [];
-    for (let i = 0; i < nx; i++) for (let j = 0; j < ny; j++) studs.push(world(it, (i - (nx - 1) / 2) * p, (j - (ny - 1) / 2) * p, h));
-    studs.sort((a, b) => dot(b, D) - dot(a, D));
-    for (const c of studs) {
-      const [bx, by] = P(c), [tx, ty] = P([c[0], c[1], c[2] + task.stud_h]);
-      g.fillStyle = shade(it.rgba, 0.7, alpha);
-      g.beginPath(); g.ellipse(bx, by, r, ry, 0, 0, Math.PI * 2); g.fill();
-      g.fillRect(bx - r, ty, 2 * r, by - ty);
-      g.fillStyle = shade(it.rgba, 1.12, alpha);
-      g.beginPath(); g.ellipse(tx, ty, r, ry, 0, 0, Math.PI * 2); g.fill();
-    }
-    // Outline: dashed for to-do bricks, glowing for the next one.
-    const outline = () => {
-      g.beginPath();
-      for (const q of [bot, top]) {
-        q.forEach((v, i) => (i ? g.lineTo(...P(v)) : g.moveTo(...P(v))));
-        g.closePath();
-      }
-      for (let i = 0; i < 4; i++) { g.moveTo(...P(bot[i])); g.lineTo(...P(top[i])); }
-    };
+    // Open top: the rim with the darker inside.
+    poly(top);
+    g.fillStyle = shade(it.rgba, 0.45, alpha);
+    g.fill();
+    g.lineWidth = 2;
+    g.strokeStyle = shade(it.rgba, 1.15, alpha);
+    g.stroke();
+    // Outline: dashed for to-do cups, glowing for the next one.
     if (st === "todo") {
       g.setLineDash([6, 6]);
       g.strokeStyle = shade(it.rgba, 1.2, 0.6);
       g.lineWidth = 2;
-      outline();
+      side();
       g.stroke();
       g.setLineDash([]);
     } else if (st === "next") {

@@ -56,7 +56,6 @@ const HINTS: Record<Arm, Hint[]> = {
     { comp: "y-button", key: "Y", slot: B_SECONDARY, label: () => "Menu" },
     { comp: "x-button", key: "X", slot: B_PRIMARY, label: () => "Save", active: (c) => rec(c) === "review" || rec(c) === "recording" },
     { comp: "xr-standard-thumbstick", key: "L3", slot: B_STICK_PRESS, label: () => "Recenter" },
-    ...COMMON,
   ],
 };
 
@@ -105,7 +104,7 @@ class HintLabel {
   }
 }
 
-/** Status tag above a controller: arm, clutch, held brick, recording, reach. */
+/** Status tag above a controller: arm, clutch, held cup, recording, reach. */
 class StatusChip {
   readonly panel: Panel;
   private key = "";
@@ -130,6 +129,7 @@ class StatusChip {
     const a = this.arm;
     let detail = "Press GRIP to take control", dc = THEME.dim;
     if (!s) { detail = "Server offline"; dc = THEME.warn; }
+    else if (!s.arms.includes(a)) { detail = "No arm: menu · save · recenter"; }
     else if (s.mode === "hands") { detail = "Hands mode: put controllers down"; dc = THEME.warn; }
     else if (s.out_of_reach[a]) { detail = "⚠ Out of reach"; dc = THEME.rec; }
     else if (s.held[a]) { detail = `✊ ${s.held[a]!.replace(/_/g, " ")}`; dc = THEME.ok; }

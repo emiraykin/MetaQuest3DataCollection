@@ -44,7 +44,7 @@ flowchart LR
 The simulation exists only on the PC. The headset sends what it tracks (head, controllers or hands) and draws
 the body poses the PC sends back, so the robot the operator sees is the same robot that is recorded. The
 headset and the dashboard both rebuild the 3D scene from geometry the server exports (`/api/scene`), so nothing
-about the robot or the bricks is hard-coded in the browser.
+about the robot or the cups is hard-coded in the browser.
 
 ## One control tick
 
@@ -53,19 +53,19 @@ about the robot or the bricks is hard-coded in the browser.
 | Step | Code | What happens |
 | --- | --- | --- |
 | 1 | `Runtime._process_commands` | Apply queued commands (record, save, reset, set mode, …) from the dashboard, the headset menu or the buttons. |
-| 2 | `Teleop.update` | Latest input frame → one end-effector target and one gripper value per arm (see [Teleoperation](#teleoperation-from-hand-to-arm-target)). |
-| 3 | `BimanualIK.follow` + `solve` | Targets → 14 joint angles, with the IK held within `ik.max_lead` of the measured joints. |
+| 2 | `Teleop.update` | Latest input frame → one end-effector target and one gripper value per arm in `sim.ARMS` (just the right one), plus button commands from both controllers (see [Teleoperation](#teleoperation-from-hand-to-arm-target)). |
+| 3 | `ArmIK.follow` + `solve` | Target → 7 joint angles, with the IK held within `ik.max_lead` of the measured joints. |
 | 4 | `Recorder.tick` | Advance the countdown; switch to recording when it ends. |
-| 5 | `BimanualEnv.observe` / `get_state` | If recording: snapshot the observation and the full sim state *before* the step. |
-| 6 | `BimanualEnv.apply_action` | Joint targets to the arm servos; the gripper target moves at 50 mm/s per finger. |
-| 7 | `Recorder.append` | If recording: store the step (obs, action, state, success, progress, clutch, raw teleop). |
-| 8 | `BimanualEnv.step` | 10 physics substeps (`physics_dt` = 2 ms), then `_update_clutch` clicks or unclicks bricks. |
-| 9 | `Runtime._task_feedback` | Compare grasp / progress / clutch state with the last tick and emit haptic, sound and toast events. |
-| 10 | `Runtime._check_warnings` | Arm–arm and arm–table contacts, out-of-reach targets. |
+| 5 | `PandaEnv.observe` / `get_state` | If recording: snapshot the observation and the full sim state *before* the step. |
+| 6 | `PandaEnv.apply_action` | Joint targets to the arm servos; the gripper target moves at 50 mm/s per finger. |
+| 7 | `Recorder.append` | If recording: store the step (obs, action, state, success, progress, raw teleop). |
+| 8 | `PandaEnv.step` | 10 physics substeps (`physics_dt` = 2 ms). |
+| 9 | `Runtime._task_feedback` | Compare grasp / progress state with the last tick and emit haptic, sound and toast events. |
+| 10 | `Runtime._check_warnings` | Arm–table contacts, out-of-reach targets. |
 | 11 | `Runtime._publish` | Pack the pose frame; every 5th tick the status dict; every 6th tick camera previews (only while someone is looking). |
 
 During a replay (`replay` command or `qc replay`), steps 2–10 are skipped: the tick just loads the next recorded
-state with `BimanualEnv.set_state`.
+state with `PandaEnv.set_state`.
 
 ## Threads and who owns what
 
@@ -84,7 +84,7 @@ Rule: the server never touches simulation state directly. Anything that changes 
 | --- | --- | --- |
 | `GET /xr/`, `/dashboard/` | → browser | the built web pages (`web/dist`) |
 | `GET /api/scene`, `/api/scene.bin` | → browser | visual geometry: bodies, geoms, materials (JSON) + mesh vertices/faces (binary) |
-| `GET /api/task` | → browser | the goal as data: bricks, where each goes, the build area (`sim.task_spec()`) |
+| `GET /api/task` | → browser | the goal as data: cup shape, cups, where each goes, the build area (`sim.task_spec()`) |
 | `GET /api/status` | → browser | the latest status dict (same as on the websockets) |
 | `GET /api/episodes`, `DELETE /api/episodes?path=` | ↔ | list / delete saved episodes |
 | `POST /api/command` | → server | `{"name": ..., "args": {...}}`, queued to the sim thread |
@@ -98,7 +98,7 @@ in [web/src/protocol.ts](../web/src/protocol.ts) (little endian, 16-byte headers
 - *Input* (headset → server, every XR frame): header with both hands' input source (none / controller / hand),
   sequence number and an echoed server timestamp (for the round-trip time), then the head pose and, per hand, the
   control pose, 8 button values, 25 hand-joint poses and 2 pinch distances: always 391 floats (1,580 bytes).
-- *Pose* (server → clients): header with flags (left engaged, right engaged, recording), body count and server
+- *Pose* (server → clients): header with flags (left engaged, right engaged, recording; only the arms in `sim.ARMS` are ever engaged), body count and server
   time, then every MuJoCo body's world pose.
 
 **JSON events** (server → clients): `status` (10 Hz), `toast`, `haptic` (`arm`, `intensity`, `ms`, `repeat`,
@@ -135,18 +135,19 @@ XR pose → world (Placement) → jump rejection → One-Euro filter → clutch 
 - **Gripper.** Trigger value, or the thumb–index distance mapped between `pinch_closed_m` and `pinch_open_m`.
 - **Safety.** Input older than 0.25 s or a jump of more than 12 cm between ticks drops the clutch (the arm holds
   its last target until you engage again). Targets are clamped to `workspace_min/max`.
+- **One arm.** `sim.ARMS = ("r",)`: only the right controller/hand gets an `_ArmState`. The left controller still
+  runs through a `ControllerMapper` in `Teleop.command_only`, for its buttons only.
 - **Buttons.** `CONTROLLER_COMMANDS` maps A/B/X/left-stick presses to recorder commands. The headset's button
   labels (`HINTS` in `web/src/xr/visuals.ts`) mirror this table; keep them in sync.
 
 ## Inverse kinematics
 
-[questcollect/ik.py](../questcollect/ik.py) uses [mink](https://github.com/kevinzakka/mink) with one QP for
-both arms: a frame task per gripper (position + orientation cost), a small posture task, joint position and
-velocity limits, and optionally an arm–arm collision limit (`ik.avoid_arm_collisions`, off by default: the
-physics handles collisions, like on real arms).
+[questcollect/ik.py](../questcollect/ik.py) uses [mink](https://github.com/kevinzakka/mink) (`ArmIK`): a frame task
+on the gripper (position + orientation cost), a small posture task, and joint position and velocity limits. The
+physics handles collisions, like on a real arm.
 
-The IK keeps its own model (the same scene without the bricks) and is open-loop, except that `follow()` keeps it
-within `ik.max_lead` radians of the measured joints. Without that, an arm blocked by the table or the other arm
+The IK keeps its own model (the same scene without the cups) and is open-loop, except that `follow()` keeps it
+within `ik.max_lead` radians of the measured joints. Without that, an arm blocked by the table or a cup
 would let the IK run on through the obstacle and then yank the arm when it came free. If the target stays more
 than 3 cm away from what the IK can reach, the arm is flagged *out of reach*.
 
@@ -154,26 +155,22 @@ than 3 cm away from what the IK can reach, the arm is flagged *out of reach*.
 
 [questcollect/sim.py](../questcollect/sim.py) builds everything in code with `MjSpec`:
 
-- **Robots.** Two Franka Panda arms from MuJoCo Menagerie, side by side on the near table edge, 0.6 m apart
-  (`sim.arm_spacing`), gravity-compensated like the real controller. Each hand has a `tcp` site (the point the
-  arm is steered by), a wrist camera and an operator-only grasp-point marker.
+- **Robot.** One Franka Panda arm from MuJoCo Menagerie (prefix `r_`, driven by the right controller) at the
+  middle of the near table edge, gravity-compensated like the real controller. The hand has a `tcp` site (the
+  point the arm is steered by), a wrist camera and an operator-only grasp-point marker.
 - **Gripper.** A stiff servo on the finger tendon whose force is capped at `sim.gripper_force` (40 N), with the
   target moving at the real Franka Hand's 50 mm/s. The four small fingertip pads from Menagerie are merged into
-  one flat pad so a brick can't wedge between them.
-- **Bricks.** Hollow DUPLO bricks built from boxes and cylinders: top plate, walls, chamfered studs and the tubes
-  underneath, at real dimensions and BrickLink masses. Each brick also has an invisible solid `<brick>_core` in its
-  hollow underside that only the robot collides with, so a finger can't hook into a brick.
+  one flat pad so a thin cup wall can't wedge between them.
+- **Cups.** The tapered cup from `mujoco_toy-project` (`generate_cup.py`), rebuilt in `_cup_parts`: a thin
+  cylinder base plus `CUP_N_WALL` thin tilted boxes, because MuJoCo only collides convex shapes (a cup mesh would
+  act like a solid cylinder). Nested, a cup rests `NEST_DZ` (33 mm) above the one below.
 - **Contacts.** Stiff contact parameters (`RIGID_SOLREF`, `RIGID_SOLIMP`), elliptic friction cones and
-  `impratio` 10, so bricks don't sink into each other and grasps don't creep.
-- **Clicking (clutch).** One inactive weld per brick pair (`CLUTCH_PAIRS`). After every step, `_update_clutch`
-  turns a weld on when two bricks touch, `stud_seated` finds the upper one on the lower one's stud grid, and the
-  vertical contact force exceeds `CLUTCH_PRESS_N`. It turns it off when the weld has to hold more than
-  `CLUTCH_PULL_N` of tension plus shear (compression doesn't count, so pressing harder never pops a brick). The
-  weld is softer than the contacts, so the studs carry the press load.
-- **Progress and success.** `tower_progress` counts levels that are in the right place (within `TOL_XY`,
-  `TOL_Z`, `TOL_YAW`) *and* clicked, bottom-up, and is 0 unless the base lies completely inside the build area.
-  `_task_success` = all levels placed, nothing held, and every brick slower than 2 cm/s.
-- **Cameras.** `cam_high`, `cam_low`, `cam_left_wrist`, `cam_right_wrist` (ALOHA names). Geom group 5
+  `impratio` 10, so the arm doesn't sink into things and grasps don't creep.
+- **Progress and success.** `stack_progress` counts cups, bottom-up, that rest upright (`TOL_TILT`) inside the
+  one below: centred within `TOL_XY` and `NEST_DZ_RANGE` above it, the same check as the toy project's
+  `_check_cups_stacked`. It is 0 unless the base cup's rim lies completely inside the build area.
+  `_task_success` = all cups stacked, nothing held, and every cup slower than 2 cm/s.
+- **Cameras.** `cam_high` (above the table, from the operator's right), `cam_low`, `cam_wrist`. Geom group 5
   (`OPERATOR_GROUP`) holds visuals only the operator sees (grasp-point markers); MuJoCo cameras render groups 0–2,
   so these never reach the recorded images.
 
@@ -181,15 +178,13 @@ than 3 cm away from what the IK can reach, the arm is flagged *out of reach*.
 
 - **State machine** ([questcollect/recorder.py](../questcollect/recorder.py)):
   `idle → countdown (3 s) → recording → review → saved | discarded → idle`. With auto-stop on, recording ends
-  1 s after the task first succeeds. Saving resets the scene with a new random brick layout.
+  1 s after the task first succeeds. Saving resets the scene with a new random cup layout.
 - **File format.** One HDF5 file per episode; the full field list is the module docstring of `recorder.py`.
   Images are never recorded.
-- **Exact replay.** `sim/state` is MuJoCo's full integration state *plus* the six clutch welds' relative poses.
-  The welds live in `model.eq_data`, which `mj_getState` doesn't cover, so always use
-  `BimanualEnv.get_state` / `set_state`, never raw `mj_getState`.
+- **Exact replay.** `sim/state` is MuJoCo's full integration state (`PandaEnv.get_state` / `set_state`).
 - **Export** ([questcollect/lerobot_export.py](../questcollect/lerobot_export.py)): for each episode, set every
-  recorded state, render the four cameras at the requested resolution, and add the frame to a `LeRobotDataset`.
-  With `--randomize-visuals`, `AppearanceRandomizer` varies lights, surface colours, brick brightness and camera
+  recorded state, render the cameras at the requested resolution, and add the frame to a `LeRobotDataset`.
+  With `--randomize-visuals`, `AppearanceRandomizer` varies lights, surface colours, cup brightness and camera
   mounts per episode (rendering only). All LeRobot API calls live in this one file.
 
 ## The web client
@@ -215,23 +210,24 @@ than 3 cm away from what the IK can reach, the arm is flagged *out of reach*.
 | To change… | Edit | Notes |
 | --- | --- | --- |
 | a setting (rates, scale, workspace, ports, gripper force) | `config.yaml` | see the README's Configuration section |
-| the tower, bricks, build area, tolerances, click forces | constants at the top of `questcollect/sim.py` | the goal panels follow automatically (`task_spec()`); old episodes keep their own `tower` attribute |
+| the cups, their shape, the build area, tolerances | constants at the top of `questcollect/sim.py` | the goal panels follow automatically (`task_spec()`); old episodes keep their own `cups` attribute |
 | vibration patterns | `HAPTIC_*` in `questcollect/runtime.py` | |
+| which controller drives the arm | `ARMS` in `questcollect/sim.py` | the arm's body/joint prefix; the other controller only sends commands |
 | sounds | `CUES` in `web/src/xr/sounds.ts` | names must match the server's `sound` events |
 | controller buttons | `CONTROLLER_COMMANDS` in `teleop.py` **and** `HINTS` in `web/src/xr/visuals.ts` | |
 | the wire format | `protocol.py` **and** `web/src/protocol.ts` | keep `test_protocol_roundtrip` passing |
 | recorded fields | `Runtime._build_step`, the `recorder.py` docstring, bump `SCHEMA_VERSION` | |
 | export features | `questcollect/lerobot_export.py` | |
 
-Changing the scene's degrees of freedom (adding a brick, a joint) changes the size of `sim/state`. The exporter
+Changing the scene's degrees of freedom (adding a cup, a joint) changes the size of `sim/state`. The exporter
 refuses episodes whose state size doesn't match the current scene, rather than replaying them wrongly.
 
 ## Tests
 
 | Command | Covers |
 | --- | --- |
-| `uv run --group dev pytest` | frames, filters, clutch, mappers, protocol round-trip; scene build, brick physics, clicking, grasping, gripper speed, IK, state replay, scene export, recorder, haptics |
+| `uv run --group dev pytest` | frames, filters, clutch, mappers, protocol round-trip; scene build, cup stacking, grasping, gripper speed, IK, state replay, scene export, recorder, haptics |
 | `MUJOCO_GL=egl uv run --group dev pytest` (with `uv sync --extra export`) | the above plus a LeRobot export |
 | `cd web && npm run typecheck` | TypeScript |
 | `cd web/e2e && npm test` | an emulated Quest 3 against a running server: controllers, hands, clutch, gripper, record → save (setup at the top of `emulated-quest.mjs`) |
-| `MUJOCO_GL=egl uv run python scripts/make_media.py` | builds the whole tower with the real IK and gripper; must print `success: True` |
+| `MUJOCO_GL=egl uv run python scripts/make_media.py` | stacks all the cups with the real IK and gripper; must print `success: True` |

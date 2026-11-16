@@ -5,7 +5,7 @@ import pytest
 
 from questcollect.config import TeleopConfig
 from questcollect.frames import Placement, mat_to_quat_wxyz, quat_wxyz_to_mat, wxyz_to_xyzw, xyzw_to_wxyz
-from questcollect.protocol import (FLAG_ENGAGED_R, SRC_CONTROLLER, SRC_HAND, HandInput, InputFrame, pack_input,
+from questcollect.protocol import (B_PRIMARY, FLAG_ENGAGED_R, SRC_CONTROLLER, SRC_HAND, HandInput, InputFrame, pack_input,
                                   pack_pose_frame, parse_input)
 from questcollect.teleop import ArmClutch, HandMapper, OneEuro, OneEuroRotation, Teleop
 
@@ -122,7 +122,7 @@ def controller_frame(x=0.2, y=1.1, squeeze=0.0, trigger=0.0) -> InputFrame:
 
 def make_teleop(mode="controllers") -> Teleop:
     t = Teleop(TeleopConfig(mode=mode))
-    t.reset({"l": (np.array([0.46, 0.3, 1.15]), np.eye(3)), "r": (np.array([0.46, -0.3, 1.15]), np.eye(3))})
+    t.reset({"r": (np.array([0.46, 0.0, 1.15]), np.eye(3))})
     return t
 
 
@@ -136,7 +136,7 @@ def test_teleop_controller_follow_and_hold():
         out = t.update(controller_frame(x=0.2 + 0.1 * a, y=1.1 - 0.1 * a, squeeze=1.0, trigger=1.0), time.monotonic(), 0.02)
     assert out.engaged["r"]
     assert np.allclose(out.targets["r"][0] - p0, [0, -0.1, -0.1], atol=1e-3)
-    assert out.grippers[1] == pytest.approx(0.0)
+    assert out.grippers[0] == pytest.approx(0.0)
     # Letting go of Grip keeps following (it's a toggle); a second press disengages and the target holds.
     out = t.update(controller_frame(x=0.3, y=1.0), time.monotonic(), 0.02)
     assert out.engaged["r"]
@@ -157,6 +157,18 @@ def test_controller_grip_toggles_clutch():
     assert not engaged(1.0)    # press again -> off
     assert not engaged(0.0)
     assert engaged(1.0)        # and on again
+
+
+def test_left_controller_sends_commands_without_an_arm():
+    """The arm follows the right controller; the left one has no arm but X still saves and its Grip does nothing."""
+    t = make_teleop()
+    assert set(t.arms) == {"r"}
+    f = controller_frame()
+    f.left.buttons[B_PRIMARY] = 1.0  # X
+    f.left.buttons[1] = 1.0          # left Grip
+    out = t.update(f, time.monotonic(), 0.02)
+    assert out.commands == ["save"] and set(out.engaged) == {"r"} and not out.engaged["r"]
+    assert t.update(f, time.monotonic(), 0.02).commands == []  # rising edge only
 
 
 def test_teleop_stale_input_disengages():

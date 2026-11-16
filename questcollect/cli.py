@@ -16,7 +16,7 @@ import typer
 
 from questcollect.config import ROOT, load_config
 
-app = typer.Typer(add_completion=False, no_args_is_help=True, help="Quest 3 -> MuJoCo bimanual teleop & data collection")
+app = typer.Typer(add_completion=False, no_args_is_help=True, help="Quest 3 -> MuJoCo Franka teleop & data collection")
 
 
 def _headless_gl() -> None:
@@ -128,9 +128,9 @@ def view():
     """Open the scene in MuJoCo's native viewer (sanity check, no headset)."""
     import mujoco.viewer
 
-    from questcollect.sim import BimanualEnv
+    from questcollect.sim import PandaEnv
 
-    env = BimanualEnv(load_config())
+    env = PandaEnv(load_config())
     env.reset()
     mujoco.viewer.launch(env.model, env.data)
 
@@ -141,10 +141,10 @@ def replay(path: Path, speed: float = typer.Option(1.0)):
     import mujoco.viewer
 
     from questcollect.recorder import read_episode
-    from questcollect.sim import BimanualEnv
+    from questcollect.sim import PandaEnv
 
     meta, data = read_episode(path, keys=["sim/state"])
-    env = BimanualEnv(load_config())
+    env = PandaEnv(load_config())
     states = data["sim/state"]
     dt = 1.0 / meta["fps"] / speed
     with mujoco.viewer.launch_passive(env.model, env.data) as v:
@@ -175,7 +175,7 @@ def inspect(path: Path):
 def export(
     out: Path = typer.Option(ROOT / "data" / "lerobot", help="Output LeRobot dataset root"),
     raw: Optional[Path] = typer.Option(None, help="Episode folder (default: record.out_dir from the config)"),
-    repo_id: str = typer.Option("local/quest_bimanual_panda"),
+    repo_id: str = typer.Option("local/quest_panda_cups"),
     action: str = typer.Option("joint", help="joint | ee"),
     height: int = typer.Option(480),
     width: int = typer.Option(640),
@@ -197,7 +197,7 @@ def doctor():
     _headless_gl()
     import mujoco
 
-    from questcollect.sim import PANDA_XML, BimanualEnv
+    from questcollect.sim import PANDA_XML, PandaEnv
 
     def row(ok: bool, label: str, hint: str = ""):
         typer.secho(f"  {'✓' if ok else '✗'} {label}" + (f"  — {hint}" if hint and not ok else ""),
@@ -212,7 +212,7 @@ def doctor():
 
     cfg = load_config()
     row(PANDA_XML.exists(), "menagerie Panda model", "run scripts/fetch_assets.sh")
-    env = BimanualEnv(cfg)
+    env = PandaEnv(cfg)
     row(True, f"scene compiles ({env.model.nbody} bodies, {env.model.nu} actuators)")
     row(render_ok(env.model), f"offscreen rendering (MUJOCO_GL={os.environ['MUJOCO_GL']})",
         "try MUJOCO_GL=osmesa or check NVIDIA EGL drivers")

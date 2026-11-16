@@ -1,9 +1,9 @@
 """Exports an MjModel's visual geometry so the web client can rebuild the scene in three.js.
 
 The JSON describes bodies, visual geoms (primitive or mesh) and materials. Mesh vertex/face data
-goes in one binary blob (float32 vertices then uint32 faces per mesh). Meshes shared by both arms
+goes in one binary blob (float32 vertices then uint32 faces per mesh). Meshes shared by several geoms
 are deduplicated and large meshes are decimated (the Quest renders ~80k triangles instead of
-~270k for the two arms). Normals are rebuilt client-side with crease-angle smoothing.
+~135k for the arm). Normals are rebuilt client-side with crease-angle smoothing.
 """
 
 from __future__ import annotations

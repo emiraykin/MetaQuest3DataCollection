@@ -100,6 +100,8 @@ export function parsePoseFrame(buf: ArrayBuffer): PoseFrame | null {
 
 // ---- JSON messages ----------------------------------------------------------------------
 
+export type Arm = "l" | "r";
+
 export interface Status {
   type: "status";
   task: string;
@@ -114,20 +116,22 @@ export interface Status {
   auto_stop: boolean;
   success: boolean;
   success_seen: boolean;
-  progress: number; // bricks correctly stacked on the base
+  progress: number; // cups correctly stacked on the base
   levels: number;
-  in_area: boolean; // base brick lies inside the build area
-  held: { l: string | null; r: string | null };
+  in_area: boolean; // base cup stands inside the build area
+  /** Robot arms, each driven by the controller/hand of that side; per-arm maps below only have these keys. */
+  arms: Arm[];
+  held: Partial<Record<Arm, string | null>>;
   operator: string;
-  engaged: { l: boolean; r: boolean };
-  tracked: { l: boolean; r: boolean };
+  engaged: Partial<Record<Arm, boolean>>;
+  tracked: Partial<Record<Arm, boolean>>;
   mode_mismatch: boolean;
-  sources: { l: number; r: number };
-  grippers: [number, number];
-  ik_error_mm: { l: number; r: number };
-  out_of_reach: { l: boolean; r: boolean }; // IK can't get the gripper to its target
-  ee_pos: { l: [number, number, number]; r: [number, number, number] };
-  warnings: { arm_collision: boolean; table_collision: boolean; ik_saturated: boolean };
+  sources: { l: number; r: number }; // both controllers/hands, also the one without an arm
+  grippers: number[]; // in `arms` order
+  ik_error_mm: Partial<Record<Arm, number>>;
+  out_of_reach: Partial<Record<Arm, boolean>>; // IK can't get the gripper to its target
+  ee_pos: Partial<Record<Arm, [number, number, number]>>;
+  warnings: { table_collision: boolean; ik_saturated: boolean };
   input_hz: number;
   rtt_ms: number | null;
   loop_hz: number;
@@ -146,12 +150,11 @@ export type ServerEvent =
 export interface TaskSpec {
   task: string;
   instruction: string;
-  pitch: number;
-  stud_r: number;
-  stud_h: number;
-  bricks: { name: string; label: string; size: [number, number, number]; studs: [number, number]; rgba: number[] }[];
-  /** Build order; pos/yaw relative to the base brick (bottom centre, its yaw), metres / radians. */
-  goal: { brick: number; pos: [number, number, number]; yaw: number }[];
+  /** Shared cup shape: outer radius at the bottom and the rim, height (metres). */
+  cup: { r_bottom: number; r_top: number; height: number };
+  cups: { name: string; label: string; rgba: number[] }[];
+  /** Stacking order; pos relative to the base cup's bottom centre, metres. */
+  goal: { cup: number; pos: [number, number, number] }[];
   area: { center: [number, number]; half: [number, number] };
 }
 

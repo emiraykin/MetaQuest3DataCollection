@@ -13,29 +13,22 @@ import numpy as np
 
 from questcollect.config import load_config
 from questcollect.recorder import episode_files, read_episode, read_meta
-from questcollect.sim import AppearanceRandomizer, BimanualEnv, CameraRenderer
+from questcollect.sim import AppearanceRandomizer, CameraRenderer, PandaEnv
 
 log = logging.getLogger(__name__)
 
 MAX_GRIPPER_WIDTH = 0.08
-JOINT_NAMES = (
-    [f"left_joint{i}" for i in range(1, 8)] + ["left_gripper"]
-    + [f"right_joint{i}" for i in range(1, 8)] + ["right_gripper"]
-)
-EE_NAMES = (
-    [f"left_ee_{k}" for k in ("x", "y", "z", "qw", "qx", "qy", "qz")]
-    + [f"right_ee_{k}" for k in ("x", "y", "z", "qw", "qx", "qy", "qz")]
-    + ["left_gripper", "right_gripper"]
-)
+JOINT_NAMES = [f"joint{i}" for i in range(1, 8)] + ["gripper"]
+EE_NAMES = [f"ee_{k}" for k in ("x", "y", "z", "qw", "qx", "qy", "qz")] + ["gripper"]
 
 
 def _state_and_action(data: dict, mode: str) -> tuple[np.ndarray, np.ndarray]:
     grip = np.clip(data["obs/gripper_width"] / MAX_GRIPPER_WIDTH, 0.0, 1.0)
     if mode == "joint":
         q = data["obs/joint_pos"]
-        state = np.concatenate([q[:, :7], grip[:, :1], q[:, 7:], grip[:, 1:]], axis=1)
+        state = np.concatenate([q, grip], axis=1)
         return state, data["action/joint_pos"]
-    state = np.concatenate([data["obs/ee_pose_left"], data["obs/ee_pose_right"], grip], axis=1)
+    state = np.concatenate([data["obs/ee_pose"], grip], axis=1)
     return state, data["action/ee_pose"]
 
 
@@ -53,7 +46,7 @@ def export(raw: Path, out: Path, repo_id: str, action: str = "joint",
         return 0
     meta0 = read_meta(files[0])
     cameras = list(meta0["camera_names"])
-    env = BimanualEnv(load_config())
+    env = PandaEnv(load_config())
     renderer = CameraRenderer(env.model, height, width, cameras)
     looks = AppearanceRandomizer(env.model) if randomize_visuals else None
 
@@ -66,7 +59,7 @@ def export(raw: Path, out: Path, repo_id: str, action: str = "joint",
         features[f"observation.images.{cam}"] = {
             "dtype": "video", "shape": (height, width, 3), "names": ["height", "width", "channels"]}
     ds = LeRobotDataset.create(repo_id=repo_id, fps=int(meta0["fps"]), features=features, root=out,
-                               robot_type="bimanual_franka_panda", use_videos=True, image_writer_threads=4)
+                               robot_type="franka_panda", use_videos=True, image_writer_threads=4)
 
     for k, f in enumerate(files):
         meta, data = read_episode(f)

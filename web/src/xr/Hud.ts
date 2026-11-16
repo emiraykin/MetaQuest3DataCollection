@@ -1,7 +1,7 @@
 // World-anchored heads-up display above the far edge of the table.
 
-import { bricksPlaced } from "../goal";
-import type { Status } from "../protocol";
+import { cupsPlaced } from "../goal";
+import type { Arm, Status } from "../protocol";
 import { SRC_CONTROLLER, SRC_HAND } from "../protocol";
 import { glass, Panel, roundRect, text, THEME, wrapText } from "./Panel";
 
@@ -73,7 +73,7 @@ export class Hud {
 
     // --- task + instruction ---------------------------------------------------------
     const tx = px + pillW + 40;
-    text(g, `${s.task.replace(/_/g, " ").toUpperCase()}  ·  ${bricksPlaced(s.progress, s.in_area)}/${s.levels + 1}`, tx, py + 26, 34, { weight: 800, color: THEME.text });
+    text(g, `${s.task.replace(/_/g, " ").toUpperCase()}  ·  ${cupsPlaced(s.progress, s.in_area)}/${s.levels + 1}`, tx, py + 26, 34, { weight: 800, color: THEME.text });
     wrapText(g, s.instruction, tx, py + 74, w - tx - 290, 38, 29, THEME.dim, 3);
 
     // --- stats column -----------------------------------------------------------------
@@ -101,9 +101,9 @@ export class Hud {
 
     // --- bottom row: per-arm tracking + warnings ------------------------------------------
     const by = h - pad - 70;
-    const arm = (key: "l" | "r", x: number) => {
+    const arm = (key: Arm, x: number) => {
       const c = key === "l" ? THEME.left : THEME.right;
-      const tracked = s.tracked[key], engaged = s.engaged[key];
+      const tracked = !!s.tracked[key], engaged = !!s.engaged[key];
       roundRect(g, x, by, 300, 70, 35);
       g.fillStyle = engaged ? c : "rgba(0,0,0,0.3)";
       g.globalAlpha = engaged ? 0.9 : 1;
@@ -117,7 +117,7 @@ export class Hud {
       text(g, `${key === "l" ? "LEFT" : "RIGHT"} ${engaged ? "ENGAGED" : tracked ? "TRACKED" : "LOST"}`, x + 74, by + 36, 26,
         { weight: 800, color: engaged ? "#0b1020" : tracked ? c : THEME.dim });
       // gripper bar
-      const gw = s.grippers[key === "l" ? 0 : 1];
+      const gw = s.grippers[s.arms.indexOf(key)] ?? 1;
       roundRect(g, x + 74, by + 54, 200, 6, 3);
       g.fillStyle = "rgba(255,255,255,0.15)";
       g.fill();
@@ -125,12 +125,10 @@ export class Hud {
       g.fillStyle = engaged ? "#0b1020" : c;
       g.fill();
     };
-    arm("l", pad);
-    arm("r", pad + 320);
+    s.arms.forEach((a, i) => arm(a, pad + 320 * i));
 
     const warns: [string, string][] = [];
     if (s.mode_mismatch) warns.push([s.mode === "hands" ? "Put controllers down" : "Pick up controllers", THEME.warn]);
-    if (s.warnings.arm_collision) warns.push(["Arms colliding", THEME.rec]);
     if (s.warnings.table_collision) warns.push(["Table contact", THEME.warn]);
     if (s.warnings.ik_saturated) warns.push(["Out of reach", THEME.warn]);
     if (!s.connected) warns.push(["No input", THEME.dim]);

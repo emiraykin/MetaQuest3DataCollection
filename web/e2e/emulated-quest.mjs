@@ -42,7 +42,7 @@ await sleep(2500);
 
 let s = await status();
 check(s.sources.l === 1 && s.sources.r === 1, `controllers seen by server (sources=${JSON.stringify(s.sources)})`);
-check(s.tracked.l && s.tracked.r, "both arms tracked");
+check(s.arms.join() === "r" && s.tracked.r, "the one arm (right) is tracked");
 check(s.input_hz > 20, `input stream rate ${s.input_hz} Hz`);
 check(s.rtt_ms !== null && s.rtt_ms < 100, `server-measured RTT ${s.rtt_ms} ms`);
 
@@ -56,7 +56,7 @@ const tapGrip = async () => {
 };
 await tapGrip();
 s = await status();
-check(s.engaged.r && !s.engaged.l, "grip press engages only the right arm, and it stays engaged");
+check(s.engaged.r && !("l" in s.engaged), "grip press engages the arm, and it stays engaged");
 for (let i = 1; i <= 20; i++) {
   await page.evaluate((k) => window.__xr.controllers.right.position.set(0.2 + 0.005 * k, 1.1 - 0.005 * k, -0.35), i);
   await sleep(40);
@@ -69,7 +69,7 @@ check(d[1] < -0.07 && d[2] < -0.07 && Math.abs(d[0]) < 0.03, `right EE followed 
 await page.evaluate(() => window.__xr.controllers.right.updateButtonValue("trigger", 1));
 await sleep(600);
 s = await status();
-check(s.grippers[1] < 0.05, `trigger closes right gripper (cmd=${s.grippers[1]})`);
+check(s.grippers[0] < 0.05, `trigger closes the gripper (cmd=${s.grippers[0]})`);
 await page.evaluate(() => window.__xr.controllers.right.updateButtonValue("trigger", 0));
 await tapGrip();
 s = await status();
@@ -103,7 +103,7 @@ await page.evaluate(() => { window.__xr.primaryInputMode = "hand"; });
 await sleep(1200);
 s = await status();
 check(s.mode === "hands" && s.sources.l === 2 && s.sources.r === 2, `hands seen by server (sources=${JSON.stringify(s.sources)})`);
-check(s.tracked.l && s.tracked.r && !s.mode_mismatch, "hands tracked, no mode mismatch");
+check(s.tracked.r && !s.mode_mismatch, "hand tracked, no mode mismatch");
 await page.evaluate(() => window.__xr.hands.right.position.set(0.15, 1.0, -0.3));  // place hand before engaging
 await sleep(500);
 const rh0 = (await status()).ee_pos.r;
@@ -112,11 +112,11 @@ await sleep(500);
 await page.evaluate(() => { window.__xr.hands.right.poseId = "default"; });
 await sleep(500);
 s = await status();
-check(s.engaged.r, "thumb-middle pinch toggles right arm engaged");
+check(s.engaged.r, "thumb-middle pinch toggles the arm engaged");
 await page.evaluate(() => window.__xr.hands.right.updatePinchValue(1));
 await sleep(800);
 s = await status();
-check(s.grippers[1] < 0.3, `index pinch closes gripper (cmd=${s.grippers[1]})`);
+check(s.grippers[0] < 0.3, `index pinch closes gripper (cmd=${s.grippers[0]})`);
 for (let i = 1; i <= 20; i++) {
   await page.evaluate((k) => window.__xr.hands.right.position.set(0.15, 1.0, -0.3 - 0.005 * k), i);
   await sleep(40);

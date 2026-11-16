@@ -1,4 +1,4 @@
-"""Operator input -> per-arm end-effector targets.
+"""Operator input -> end-effector targets (one per arm in sim.ARMS; the other controller only sends commands).
 
 Pipeline per arm and control tick:
   XR pose -> MuJoCo world (frames.Placement) -> jump rejection -> One-Euro filter -> clutch -> workspace clamp
@@ -250,6 +250,8 @@ class Teleop:
         self.ws_min = np.array(cfg.workspace_min)
         self.ws_max = np.array(cfg.workspace_max)
         self.arms = {a: _ArmState(a, cfg) for a in ARMS}
+        # Controllers without an arm still send their button commands (save, recenter).
+        self.command_only = {a: ControllerMapper(a) for a in ("l", "r") if a not in ARMS}
 
     def reset(self, ee_poses: dict[str, tuple[np.ndarray, np.ndarray]]) -> None:
         """Disengage everything and hold the given EE poses."""
@@ -278,9 +280,13 @@ class Teleop:
         self.release_all()
 
     def update(self, frame: InputFrame | None, now: float, dt: float) -> TeleopOutput:
-        out = TeleopOutput(targets={}, grippers=np.ones(2), engaged={}, tracked={})
+        out = TeleopOutput(targets={}, grippers=np.ones(len(self.arms)), engaged={}, tracked={})
         stale = frame is None or (now - frame.recv_time) > INPUT_TIMEOUT_S
         want_src = SRC_CONTROLLER if self.mode == "controllers" else SRC_HAND
+        for a, mapper in self.command_only.items():
+            h = None if stale else frame.hand(a)
+            if self.mode == "controllers" and h is not None and h.source == SRC_CONTROLLER:
+                out.commands += mapper.update(h)[2]
         for i, (a, st) in enumerate(self.arms.items()):
             h = None if stale else frame.hand(a)
             tracked = h is not None and h.source == want_src

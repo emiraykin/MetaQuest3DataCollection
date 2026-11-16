@@ -63,7 +63,7 @@ export class MujocoScene {
   readonly environment = new THREE.Group();   // floor + backdrop (hidden in passthrough)
   desc: SceneDesc | null = null;
   engaged = { l: false, r: false };
-  private outOfReach = { l: false, r: false };
+  private outOfReach: Partial<Record<"l" | "r", boolean>> = {};
   private bodies: THREE.Object3D[] = [];
   private markers: TcpMarker[] = [];
   private tableZ = 0;
@@ -201,7 +201,7 @@ export class MujocoScene {
   }
 
   /** Markers turn red while the IK can't get that gripper to its target. */
-  setOutOfReach(outOfReach: { l: boolean; r: boolean }) {
+  setOutOfReach(outOfReach: Partial<Record<"l" | "r", boolean>>) {
     this.outOfReach = { ...outOfReach };
   }
 

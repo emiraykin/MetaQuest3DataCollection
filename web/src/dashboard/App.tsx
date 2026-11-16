@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "../net";
-import { bricksPlaced, drawGoal, levelStates } from "../goal";
-import { type EpisodeRow, fetchTask, type ServerEvent, SRC_CONTROLLER, SRC_HAND, type Status, type TaskSpec } from "../protocol";
+import { cupsPlaced, drawGoal, levelStates } from "../goal";
+import { type Arm, type EpisodeRow, fetchTask, type ServerEvent, SRC_CONTROLLER, SRC_HAND, type Status, type TaskSpec } from "../protocol";
 import { Viewer3D, type ViewerHandle } from "./Viewer3D";
 
 type Toast = { id: number; text: string; kind: string };
@@ -69,12 +69,12 @@ export function App() {
           <div className="card viewer-card">
             <div className="card-head">
               <h2>Live scene</h2>
-              <div className="legend"><i className="dot l" /> left arm <i className="dot r" /> right arm <span className="muted">· dot = grasp point (red: out of reach)</span></div>
+              <div className="legend"><i className="dot r" /> arm (right controller) <span className="muted">· dot = grasp point (red: out of reach)</span></div>
             </div>
             <Viewer3D handle={viewer} />
             <StateOverlay status={status} />
           </div>
-          <Cameras names={["cam_high", "cam_low", "cam_left_wrist", "cam_right_wrist"]} />
+          <Cameras names={["cam_high", "cam_low", "cam_wrist"]} />
         </section>
         <aside className="col-side">
           <GoalCard task={task} status={status} />
@@ -110,7 +110,7 @@ function GoalCard({ task, status }: { task: TaskSpec | null; status: Status | nu
         <canvas ref={canvas} />
         <ol>
           {task?.goal.map((e, k) => {
-            const b = task.bricks[e.brick];
+            const b = task.cups[e.cup];
             const [r, g, bl] = b.rgba.map((v) => Math.round(v * 255));
             return (
               <li key={k} className={states[k]}>
@@ -130,7 +130,7 @@ function TopBar({ status, online }: { status: Status | null; online: boolean }) 
   const quest = status?.connected;
   return (
     <header className="topbar">
-      <div className="brand"><span className="logo">◆</span> QuestCollect <span className="muted">· bimanual Franka · MuJoCo</span></div>
+      <div className="brand"><span className="logo">◆</span> QuestCollect <span className="muted">· Franka · MuJoCo</span></div>
       <div className="chips">
         <Chip label="Server" value={online ? "online" : "offline"} tone={online ? "ok" : "bad"} />
         <Chip label="Quest" value={quest ? "streaming" : "not connected"} tone={quest ? "ok" : "warn"} />
@@ -191,7 +191,7 @@ function RecorderCard({ status, cmd }: { status: Status | null; cmd: (n: string,
       <label>Operator
         <input value={operator} onChange={(e) => setOperator(e.target.value)} onBlur={() => cmd("set_operator", { operator })} />
       </label>
-      <p className="instruction">{s?.instruction}{s && <><br /><b>Tower: {bricksPlaced(s.progress, s.in_area)} / {s.levels + 1} bricks placed</b></>}</p>
+      <p className="instruction">{s?.instruction}{s && <><br /><b>Stack: {cupsPlaced(s.progress, s.in_area)} / {s.levels + 1} cups placed</b></>}</p>
       <button className={`rec-btn ${rec}`} disabled={rec === "review" || !!s?.replay} onClick={() => cmd("record_toggle")}>
         <i />
         <span>{rec === "recording" ? `Stop · ${fmt(s!.elapsed)}` : rec === "countdown" ? `Starting in ${Math.ceil(s!.countdown)}…` : rec === "review" ? "Review take" : "Start recording"}</span>
@@ -223,14 +223,12 @@ function TeleopCard({ status, cmd }: { status: Status | null; cmd: (n: string, a
       </div>
       {s?.mode_mismatch && <div className="alert warn">Input source doesn't match the mode — {s.mode === "hands" ? "put the controllers down" : "pick up the controllers"}.</div>}
       <div className="arms">
-        <ArmTile side="l" status={s} />
-        <ArmTile side="r" status={s} />
+        {s?.arms.map((a) => <ArmTile key={a} side={a} status={s} />)}
       </div>
       <label className="slider">Motion scale <b>×{(s?.scale ?? 1).toFixed(2)}</b>
         <input type="range" min={0.25} max={3} step={0.05} value={s?.scale ?? 1} onChange={(e) => cmd("set_scale", { scale: +e.target.value })} />
       </label>
       <div className="warnings">
-        <Warn on={!!s?.warnings.arm_collision} text="Arm–arm contact" />
         <Warn on={!!s?.warnings.table_collision} text="Table contact" />
         <Warn on={!!s?.warnings.ik_saturated} text="Target out of reach" />
       </div>
@@ -238,11 +236,11 @@ function TeleopCard({ status, cmd }: { status: Status | null; cmd: (n: string, a
   );
 }
 
-function ArmTile({ side, status }: { side: "l" | "r"; status: Status | null }) {
+function ArmTile({ side, status }: { side: Arm; status: Status | null }) {
   const s = status;
   const tracked = s?.tracked[side], engaged = s?.engaged[side];
   const src = s?.sources[side];
-  const grip = s?.grippers[side === "l" ? 0 : 1] ?? 1;
+  const grip = s?.grippers[s.arms.indexOf(side)] ?? 1;
   return (
     <div className={`arm ${side} ${engaged ? "engaged" : ""} ${tracked ? "tracked" : ""}`}>
       <div className="arm-head">

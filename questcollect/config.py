@@ -15,7 +15,6 @@ class SimConfig(BaseModel):
     physics_dt: float = 0.002
     control_hz: int = 50
     table_height: float = 0.75
-    arm_spacing: float = 0.6
     gripper_force: float = 40.0  # N squeeze when closed on an object (real Franka Hand: <= 70 N)
 
 
@@ -36,8 +35,6 @@ class IKConfig(BaseModel):
     posture_cost: float = 0.01
     max_joint_vel: float = 2.5
     max_lead: float = 0.15
-    avoid_arm_collisions: bool = False
-    collision_margin: float = 0.03
     iterations: int = 2
 
 
@@ -45,7 +42,7 @@ class RecordConfig(BaseModel):
     out_dir: str = "data/episodes"
     countdown_s: float = 3
     cameras: list[str] = Field(
-        default_factory=lambda: ["cam_high", "cam_low", "cam_left_wrist", "cam_right_wrist"]
+        default_factory=lambda: ["cam_high", "cam_low", "cam_wrist"]
     )
     operator: str = "operator"
 

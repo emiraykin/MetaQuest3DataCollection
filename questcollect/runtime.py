@@ -16,11 +16,11 @@ import numpy as np
 
 from questcollect.config import Config
 from questcollect.frames import mat_to_quat_wxyz, quat_wxyz_to_mat
-from questcollect.ik import BimanualIK
+from questcollect.ik import ArmIK
 from questcollect.protocol import FLAG_ENGAGED_L, FLAG_ENGAGED_R, FLAG_RECORDING, InputFrame, pack_pose_frame
 from questcollect.recorder import Recorder, RecState, list_episodes, read_episode
 from questcollect.scene_export import body_poses, export_scene
-from questcollect.sim import ARMS, BRICKS, INSTRUCTION, LEVELS, TASK, BimanualEnv, CameraRenderer, task_spec
+from questcollect.sim import ARMS, CUPS, INSTRUCTION, LEVELS, TASK, CameraRenderer, PandaEnv, task_spec
 from questcollect.teleop import Teleop
 
 log = logging.getLogger(__name__)
@@ -31,13 +31,11 @@ PREVIEW_SIZE = (240, 320)
 IK_WARN_M = 0.03
 # Task haptics: (intensity, ms, repeat, gap_ms). Distinct patterns so the operator can tell them apart.
 # Most come with a sound cue of the same name (web/src/xr/sounds.ts), panned to that arm's side.
-HAPTIC_GRASP = (0.5, 40, 1, 0)        # fingers closed on a brick
+HAPTIC_GRASP = (0.5, 40, 1, 0)        # fingers closed on a cup
 HAPTIC_HOLD_TICK = (0.15, 20, 1, 0)   # every HOLD_TICK_S while holding
 HAPTIC_RELEASE = (0.2, 20, 1, 0)
-HAPTIC_CLICK = (0.8, 15, 1, 0)        # a brick clicked onto studs (anywhere but its tower spot)
-HAPTIC_UNCLICK = (0.4, 30, 1, 0)      # a clicked brick was pulled off
-HAPTIC_PLACED = (0.9, 60, 2, 70)      # a brick clicked into its correct spot on the tower
-HAPTIC_COMPLETE = (1.0, 120, 3, 80)   # tower finished and standing
+HAPTIC_PLACED = (0.9, 60, 2, 70)      # a cup came to rest in its spot on the stack
+HAPTIC_COMPLETE = (1.0, 120, 3, 80)   # stack finished and standing
 HOLD_TICK_S = 0.25
 HAPTIC_QUIET_S = 0.4                  # no hold ticks right after a pattern (a new pulse cuts off the old one)
 WARN_SOUND_GAP_S = 1.0                # at most one sound per warning kind and arm per second
@@ -51,16 +49,15 @@ class Runtime:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.dt = 1.0 / cfg.sim.control_hz
-        self.env = BimanualEnv(cfg)
+        self.env = PandaEnv(cfg)
         self.teleop = Teleop(cfg.teleop)
         self.placement = self.teleop.placement
-        self.ik = BimanualIK(cfg.sim, cfg.ik, self.dt)
+        self.ik = ArmIK(cfg.sim, cfg.ik, self.dt)
         self.recorder = Recorder(cfg, cfg.out_dir)
         self._scene_json, self._scene_blob = export_scene(self.env.model)
 
         m = self.env.model
         self._arm_bodies = {a: {b for b in range(m.nbody) if m.body(b).name.startswith(f"{a}_")} for a in ARMS}
-        self._finger_bodies = {b for b in range(m.nbody) if "finger" in m.body(b).name}
         self._table_body = m.body("table").id
 
         self._input: InputFrame | None = None
@@ -82,13 +79,13 @@ class Runtime:
         self._tick_count = 0
         self._loop_hz = float(cfg.sim.control_hz)
         self._replay: dict | None = None
-        self._warn = {"arm_collision": False, "table_collision": False, "ik_saturated": False}
+        self._warn = {"table_collision": False, "ik_saturated": False}
         self._reach = {a: False for a in ARMS}
         self._engaged = {a: False for a in ARMS}
         self._warn_sound_at: dict[tuple[str, str | None], float] = {}
         self._base_in_area = False
         self._held: dict[str, int | None] = {a: None for a in ARMS}
-        self._last_holder: list[str | None] = [None] * len(BRICKS)
+        self._last_holder: list[str | None] = [None] * len(CUPS)
         self._progress = 0
         self._complete = False
         self._hold_tick_at = {a: 0.0 for a in ARMS}
@@ -161,7 +158,7 @@ class Runtime:
         self._emit({"type": "haptic", "arm": arm, "intensity": intensity, "ms": ms, "repeat": repeat, "gap_ms": gap_ms})
 
     def _haptic_both(self, intensity: float, ms: int, repeat: int = 1, gap_ms: int = 0) -> None:
-        for a in ARMS:
+        for a in ("l", "r"):  # both controllers, also the one without an arm
             self._haptic(a, intensity, ms, repeat, gap_ms)
 
     def _sound(self, name: str, arm: str | None = None) -> None:
@@ -176,7 +173,7 @@ class Runtime:
     def _reset_scene(self, seed: int | None = None) -> None:
         obs = self.env.reset(seed)
         self._held = {a: None for a in ARMS}
-        self._last_holder = [None] * len(BRICKS)
+        self._last_holder = [None] * len(CUPS)
         self._progress = 0
         self._complete = False
         self._base_in_area = False
@@ -348,13 +345,12 @@ class Runtime:
             "wall_time": time.monotonic(),
             "obs": obs,
             "action": {
-                "joint_pos": np.concatenate([q_target[:7], g[:1], q_target[7:], g[1:]]),
-                "ee_pose": np.concatenate([ee_act[0], ee_act[1], g]),
+                "joint_pos": np.concatenate([q_target, g]),
+                "ee_pose": np.concatenate([*ee_act, g]),
             },
             "sim": {"state": state},
             "success": success,
             "progress": self._progress,
-            "clutch": self.env.data.eq_active[self.env.clutch_eqs].copy(),
             "teleop": teleop,
         }
 
@@ -367,7 +363,7 @@ class Runtime:
             self._sound(sound, arm)
 
     def _task_feedback(self, now: float, success: bool) -> None:
-        """Haptics for grasp / hold / release, clicks, each correctly placed brick, and the finished tower."""
+        """Haptics for grasp / hold / release, each correctly stacked cup, and the finished stack."""
         held = self.env.held()
         for a in ARMS:
             b, was = held[a], self._held[a]
@@ -388,19 +384,14 @@ class Runtime:
         placed = range(self._progress + 1, progress + 1)  # a knocked-down level can fire again later
         for level in placed:
             self._pattern(self._last_holder[level], HAPTIC_PLACED, now, "placed")
-            self._toast(f"{BRICKS[level].label} placed ({level + 1}/{len(BRICKS)})", "success")  # base = 1
+            self._toast(f"{CUPS[level].label} stacked ({level + 1}/{len(CUPS)})", "success")  # base = 1
         self._progress = progress
-        for kind, _lower, upper in self.env.clutch_events:
-            if kind == "lock" and upper not in placed:
-                self._pattern(self._last_holder[upper], HAPTIC_CLICK, now, "click")
-            elif kind == "unlock":
-                self._pattern(self._last_holder[upper], HAPTIC_UNCLICK, now, "unclick")
 
-        # Base brick set down (not held) inside the build area: a soft confirmation, once per placement.
+        # Base cup set down (not held) inside the build area: a soft confirmation, once per placement.
         base_in = self.env.in_area() and 0 not in held.values()
         if base_in and not self._base_in_area:
             self._sound("area", self._last_holder[0])
-            self._toast(f"{BRICKS[0].label} is in the build area", "info")
+            self._toast(f"{CUPS[0].label} is in the build area", "info")
         self._base_in_area = base_in
 
         if success and not self._complete:
@@ -409,21 +400,17 @@ class Runtime:
 
     def _check_warnings(self, now: float) -> None:
         d = self.env.data
-        left, right = self._arm_bodies["l"], self._arm_bodies["r"]
+        robot = set().union(*self._arm_bodies.values())
         geom_body = self.env.model.geom_bodyid
-        arm_hit = table_hit = False
+        table_hit = False
         for x, y in zip(geom_body[d.contact.geom1], geom_body[d.contact.geom2]):
-            if (x in left and y in right) or (x in right and y in left):
-                arm_hit |= not (x in self._finger_bodies and y in self._finger_bodies)
             other = y if x == self._table_body else x if y == self._table_body else None
-            table_hit |= other in left or other in right
+            table_hit |= other in robot
         reach = {a: e[0] > IK_WARN_M for a, e in self.ik.errors().items()}
-        new = {"arm_collision": arm_hit, "table_collision": table_hit, "ik_saturated": any(reach.values())}
+        new = {"table_collision": table_hit, "ik_saturated": any(reach.values())}
         for k, v in new.items():
             if v and not self._warn[k]:
                 self._haptic_both(0.3, 30)
-        if arm_hit and not self._warn["arm_collision"]:
-            self._warn_sound("collision", None, now)
         if table_hit and not self._warn["table_collision"]:
             self._warn_sound("table", None, now)
         for a in ARMS:
@@ -435,8 +422,8 @@ class Runtime:
         env = self.env
         flags = 0
         if out is not None:
-            flags |= FLAG_ENGAGED_L if out.engaged["l"] else 0
-            flags |= FLAG_ENGAGED_R if out.engaged["r"] else 0
+            flags |= FLAG_ENGAGED_L if out.engaged.get("l") else 0
+            flags |= FLAG_ENGAGED_R if out.engaged.get("r") else 0
         if self.recorder.recording:
             flags |= FLAG_RECORDING
         frame = pack_pose_frame(self._pose_seq + 1, _ms(), body_poses(env.data), flags)
@@ -476,14 +463,14 @@ class Runtime:
             "progress": self._progress,
             "levels": LEVELS,
             "in_area": self.env.in_area(),
-            "clicked": len(self.env.locked_pairs()),
-            "held": {a: (None if b is None else BRICKS[b].name) for a, b in self._held.items()},
+            "held": {a: (None if b is None else CUPS[b].name) for a, b in self._held.items()},
             "operator": self.cfg.record.operator,
+            "arms": list(ARMS),
             "engaged": {a: bool(out.engaged[a]) for a in ARMS} if out else {a: False for a in ARMS},
             "tracked": {a: bool(out.tracked[a]) for a in ARMS} if out else {a: False for a in ARMS},
             "mode_mismatch": bool(out.mode_mismatch) if out else False,
-            "sources": {a: (frame.hand(a).source if frame is not None and input_age < 1.0 else 0) for a in ARMS},
-            "grippers": out.grippers.round(3).tolist() if out else [1.0, 1.0],
+            "sources": {a: (frame.hand(a).source if frame is not None and input_age < 1.0 else 0) for a in ("l", "r")},
+            "grippers": out.grippers.round(3).tolist() if out else [1.0] * len(ARMS),
             "ik_error_mm": {a: round(e[0] * 1000, 1) for a, e in errs.items()},
             "out_of_reach": {a: bool(e[0] > IK_WARN_M) for a, e in errs.items()},
             "ee_pos": {a: self.env.data.site_xpos[sid].round(4).tolist() for a, sid in zip(ARMS, self.env.tcp_sites)},

@@ -5,12 +5,12 @@ import numpy as np
 import pytest
 
 from questcollect.config import load_config
-from questcollect.ik import BimanualIK
+from questcollect.ik import ArmIK
 from questcollect.recorder import Recorder, RecState, list_episodes, read_episode
-from questcollect.runtime import HAPTIC_CLICK, HAPTIC_COMPLETE, HAPTIC_PLACED, HAPTIC_UNCLICK, Runtime
+from questcollect.runtime import HAPTIC_COMPLETE, HAPTIC_PLACED, Runtime
 from questcollect.scene_export import export_scene
-from questcollect.sim import (BRICK_H, BRICKS, BUILD_AREA_CENTER, BUILD_AREA_HALF, CLUTCH_PRESS_N, CLUTCH_PULL_N,
-                              HOME_Q, LEVELS, PITCH, BimanualEnv, set_brick_pose, task_spec, tower_poses)
+from questcollect.sim import (BUILD_AREA_CENTER, BUILD_AREA_HALF, CUP_H, CUP_R_TOP, CUPS, HOME_Q, LEVELS, NEST_DZ,
+                              PandaEnv, set_cup_pose, task_spec)
 
 
 @pytest.fixture(scope="module")
@@ -20,201 +20,108 @@ def cfg():
 
 @pytest.fixture(scope="module")
 def env(cfg):
-    return BimanualEnv(cfg)
+    return PandaEnv(cfg)
 
 
 def test_task_builds_resets_and_settles(env):
     obs = env.reset(seed=3)
-    assert obs["joint_pos"].shape == (14,) and obs["objects"].shape == (len(BRICKS), 7)
+    assert obs["joint_pos"].shape == (7,) and obs["objects"].shape == (len(CUPS), 7)
     for _ in range(50):
         env.step()
     o = env.observe()["objects"]
-    assert np.all(np.abs(o[:, :3] - obs["objects"][:, :3]) < 0.002), "bricks should rest on the table"
+    assert np.all(np.abs(o[:, :3] - obs["objects"][:, :3]) < 0.002), "cups should rest on the table"
     assert np.allclose(o[:, 2], env.table_height, atol=0.001)
     assert env.progress() == 0 and not env.success()
 
 
-def _push(env, brick: int, force, steps: int = 10, hold_base: bool = False) -> list:
-    """Apply a world-frame force (N) to one brick for `steps` control ticks; returns the clutch events."""
-    d, m = env.data, env.model
-    bid, base = m.body(BRICKS[brick].name).id, m.body(BRICKS[0].name).id
-    events = []
-    for _ in range(steps):
-        d.xfrc_applied[bid, :3] = force
-        if hold_base:
-            d.xfrc_applied[base, :3] = [0, 0, -60]
-        env.step()
-        events += env.clutch_events
-    d.xfrc_applied[:] = 0
-    return events
-
-
-def _build(env, base_xy, base_yaw, order=None, offset=(0.0, 0.0), press=True):
-    """Teleport the bricks into the goal tower (optionally in another order / shifted top brick), settle, press."""
+def _stack(env, base_xy, order=None, offset=(0.0, 0.0)):
+    """Teleport the cups into one stack (optionally in another order / with the top cup shifted), settle."""
     env.reset(seed=1)
-    goals = tower_poses([*base_xy, env.table_height], base_yaw)
-    order = order or list(range(len(BRICKS)))
+    order = order or list(range(len(CUPS)))
     for level, i in enumerate(order):
-        p, yaw = goals[level]
-        if level == len(order) - 1:
-            p = p + [*offset, 0]
-        set_brick_pose(env.data, BRICKS[i].name, p + [0, 0, 0.0005], yaw)
-    for _ in range(25):
-        env.step()
-    if press:
-        _push(env, order[-1], [0, 0, -15])
-    for _ in range(25):
+        xy = np.add(base_xy, offset) if level == len(order) - 1 and level > 0 else base_xy
+        set_cup_pose(env.data, CUPS[i].name, [*xy, env.table_height + level * (NEST_DZ + 0.002)])
+    for _ in range(50):
         env.step()
 
 
-@pytest.mark.parametrize("yaw", [0.0, 0.7, 0.7 + np.pi])
-def test_tower_complete_is_success(env, yaw):
-    _build(env, (0.45, 0.0), yaw)
-    assert env.locked_pairs() == [(0, 1), (1, 2), (2, 3)]
+def test_stack_complete_is_success(env):
+    _stack(env, (0.45, 0.0))
     assert env.progress() == LEVELS and env.success()
-    top = env.data.body(BRICKS[-1].name).xpos
-    assert abs(top[2] - (env.table_height + LEVELS * BRICK_H)) < 0.001, "studs must seat, not stand on each other"
+    dz = np.diff(env.observe()["objects"][:, 2])
+    assert np.allclose(dz, NEST_DZ, atol=0.003), "cups must nest, not stand on each other"
 
 
-def test_tower_outside_build_area_does_not_count(env):
-    """The same clicked tower built next to the taped area is not progress; one corner over the tape is enough."""
-    _build(env, (0.45, 0.25), 0.0)
-    assert env.locked_pairs() == [(0, 1), (1, 2), (2, 3)]
+def test_stack_outside_build_area_does_not_count(env):
+    """The same stack next to the taped area is not progress; the rim poking over the tape is enough."""
+    _stack(env, (0.45, 0.25))
     assert not env.in_area() and env.progress() == 0 and not env.success()
-    edge = BUILD_AREA_CENTER[0] + BUILD_AREA_HALF[0] - BRICKS[0].half[0] + 0.003  # base pokes 3 mm out
-    _build(env, (edge, 0.0), 0.0)
+    edge = BUILD_AREA_CENTER[0] + BUILD_AREA_HALF[0] - CUP_R_TOP + 0.003  # base pokes 3 mm out
+    _stack(env, (edge, 0.0))
     assert not env.in_area() and env.progress() == 0
 
 
-def test_bricks_never_start_in_build_area(env):
+def test_cup_beside_the_stack_does_not_count(env):
+    """A cup standing next to the base (not inside it) isn't stacked."""
+    _stack(env, (0.45, 0.0), offset=(0.0, 0.1))
+    assert env.progress() == 1 and not env.success()
+
+
+def test_cups_never_start_in_build_area(env):
     for seed in range(30):
         env.reset(seed=seed)
-        for b in BRICKS:
-            xy = env.data.body(b.name).xpos[:2]
+        for c in CUPS:
+            xy = env.data.body(c.name).xpos[:2]
             gap = np.maximum(np.abs(xy - BUILD_AREA_CENTER) - BUILD_AREA_HALF, 0)
-            assert np.linalg.norm(gap) > 0.02, (seed, b.name)
+            assert np.linalg.norm(gap) > 0.02, (seed, c.name)
 
 
 def test_task_spec_describes_goal():
-    """The UI draws the goal from task_spec alone, so it must match the tower the success check uses."""
+    """The UI draws the goal from task_spec alone, so it must match the stack the success check uses."""
     spec = task_spec()
-    assert [g["brick"] for g in spec["goal"]] == list(range(len(BRICKS)))
-    for g, (pos, yaw) in zip(spec["goal"], tower_poses([0, 0, 0], 0.0)):
-        assert np.allclose(g["pos"], pos) and g["yaw"] == pytest.approx(yaw)
+    assert [g["cup"] for g in spec["goal"]] == list(range(len(CUPS)))
+    assert [g["pos"][2] for g in spec["goal"]] == pytest.approx([k * NEST_DZ for k in range(len(CUPS))])
     assert spec["area"]["center"] == list(BUILD_AREA_CENTER)
-    assert len(spec["bricks"]) == len(BRICKS) and len(spec["bricks"][0]["size"]) == 3
+    assert len(spec["cups"]) == len(CUPS) and spec["cup"]["height"] == CUP_H
 
 
-def test_tower_must_be_pressed(env):
-    """Bricks that are only set down don't count: like real DUPLO, they have to be pressed until they click."""
-    _build(env, (0.45, 0.0), 0.0, press=False)
-    assert env.locked_pairs() == [] and env.progress() == 0 and not env.success()
-    events = _push(env, len(BRICKS) - 1, [0, 0, -15])
-    assert [e[0] for e in events] == ["lock"] * LEVELS
-    assert env.progress() == LEVELS
-
-
-def test_light_press_does_not_click(env):
-    _build(env, (0.45, 0.0), 0.0, press=False)
-    _push(env, len(BRICKS) - 1, [0, 0, -0.5 * CLUTCH_PRESS_N])
-    assert env.locked_pairs() == []
-
-
-def test_clutch_holds_until_pulled_hard(env):
-    _build(env, (0.45, 0.0), 0.0)
-    top = len(BRICKS) - 1
-    assert _push(env, top, [0, 0, 0.5 * CLUTCH_PULL_N], steps=25, hold_base=True) == []
-    assert env.locked_pairs() == [(0, 1), (1, 2), (2, 3)]
-    events = _push(env, top, [0, 0, 2 * CLUTCH_PULL_N], steps=25, hold_base=True)
-    assert ("unlock", 2, 3) in events
-    assert env.data.body(BRICKS[top].name).xpos[2] > env.table_height + LEVELS * BRICK_H + 0.01
-
-
-def test_hard_press_keeps_tower_clicked_and_rigid(env):
-    """Pressing a clicked tower hard (like an arm pushing down) neither pops a click nor squashes the bricks."""
-    _build(env, (0.45, 0.0), 0.0)
-    m, d = env.model, env.data
-    bricks = {m.body(b.name).id for b in BRICKS}
-    deepest = 0.0
-    for _ in range(25):
-        _push(env, len(BRICKS) - 1, [0, 0, -60], steps=1)
-        for c in d.contact[:d.ncon]:
-            if m.geom_bodyid[c.geom1] in bricks and m.geom_bodyid[c.geom2] in bricks:
-                deepest = max(deepest, -c.dist)
-    assert env.locked_pairs() == [(0, 1), (1, 2), (2, 3)]
-    assert deepest < 0.0005, f"bricks sank {deepest * 1e3:.2f} mm into each other"
-
-
-def test_locked_tower_lifts_as_one(env):
-    """Lifting a clicked brick carries the bricks clicked under it (they don't stay on the table)."""
-    _build(env, (0.45, 0.0), 0.0)
-    _push(env, 1, [0, 0, 1.0], steps=25)  # 1 N up on the blue brick; the stack weighs ~0.36 N
-    assert env.data.body(BRICKS[0].name).xpos[2] > env.table_height + 0.02
-    assert len(env.locked_pairs()) == LEVELS
-
-
-def test_wrong_tower_is_not_success(env):
-    _build(env, (0.45, 0.0), 0.0, order=[0, 2, 1, 3])  # yellow and blue swapped
-    assert env.progress() == 0 and not env.success()
-    # Blue clicked onto red across it (turned 90 degrees, on the stud grid, stable): a click, not progress.
-    env.reset(seed=1)
-    th = env.table_height
-    set_brick_pose(env.data, BRICKS[0].name, [0.45, 0.0, th])
-    set_brick_pose(env.data, BRICKS[1].name, [0.45, PITCH / 2, th + BRICK_H + 0.0005], np.pi / 2)
-    for _ in range(25):
-        env.step()
-    _push(env, 1, [0, 0, -15])
-    assert env.locked_pairs() == [(0, 1)]
+def test_wrong_order_is_not_success(env):
+    _stack(env, (0.45, 0.0), order=[0, 2, 1])  # yellow and green swapped
     assert env.progress() == 0 and not env.success()
 
 
-def test_studs_center_an_offset_brick(env):
-    """A brick dropped slightly off the stud grid slides into place, and pressing then clicks it in."""
-    env.reset(seed=1)
-    goals = tower_poses([0.45, 0.0, env.table_height], 0.0)
-    set_brick_pose(env.data, BRICKS[0].name, goals[0][0])
-    set_brick_pose(env.data, BRICKS[1].name, goals[1][0] + [0.0015, 0.001, 0.003], 0.03)
-    for _ in range(100):
-        env.step()
-    assert np.linalg.norm(env.data.body(BRICKS[1].name).xpos - goals[1][0]) < 0.001
-    _push(env, 1, [0, 0, -15])
-    assert env.progress() == 1
-
-
-def test_state_roundtrip_keeps_clicks(env):
-    """sim/state carries the clutch welds, so replaying a recorded state reproduces the clicked tower."""
-    _build(env, (0.45, 0.0), 0.4)
+def test_state_roundtrip(env):
+    _stack(env, (0.45, 0.0))
     state, pos = env.get_state(), env.observe()["objects"]
     env.reset(seed=3)
-    assert env.locked_pairs() == []
     env.set_state(state)
-    assert env.locked_pairs() == [(0, 1), (1, 2), (2, 3)]
+    assert env.progress() == LEVELS
     for _ in range(25):
         env.step()
     assert np.allclose(env.observe()["objects"][:, :3], pos[:, :3], atol=5e-4)
 
 
 def test_grasp_detection_and_force(cfg, env):
-    """Close the left gripper on a brick: held() reports it, the squeeze is the configured grasp force,
-    and the brick lifts with the hand."""
+    """Close the gripper around a cup: held() reports it, the squeeze is the configured grasp force,
+    and the cup lifts with the hand."""
     env.reset(seed=1)
     th = env.table_height
-    for i, o in enumerate(BRICKS):  # square yellow 2x2 under the left hand, the others out of the way
-        set_brick_pose(env.data, o.name, [0.45, 0.25, th] if i == 2 else [0.35 + 0.08 * i, -0.3, th])
-    ik = BimanualIK(cfg.sim, cfg.ik, env.control_dt)
+    for i, c in enumerate(CUPS):  # green cup under the hand, the others out of the way
+        set_cup_pose(env.data, c.name, [0.45, 0.0, th] if i == 1 else [0.35 + 0.15 * i, -0.3, th])
+    ik = ArmIK(cfg.sim, cfg.ik, env.control_dt)
     down = np.array([0.0, 1.0, 0.0, 0.0])
-    z_grasp = BRICK_H / 2 + 0.002
-    for z, grip, n in ((0.1, 1.0, 60), (z_grasp, 1.0, 50), (z_grasp, 0.0, 40), (0.1, 0.0, 50)):
-        ik.set_target("l", [0.45, 0.25, th + z], down)
+    z_grasp = CUP_H / 2
+    for z, grip, n in ((0.15, 1.0, 60), (z_grasp, 1.0, 50), (z_grasp, 0.0, 40), (0.15, 0.0, 50)):
+        ik.set_target("r", [0.45, 0.0, th + z], down)
         for _ in range(n):
-            env.apply_action(ik.solve(), np.array([grip, 1.0]))
+            env.apply_action(ik.solve(), np.array([grip]))
             env.step()
         if grip == 0.0 and z == z_grasp:
-            assert env.held() == {"l": 2, "r": None}
-    assert env.held()["l"] == 2
+            assert env.held() == {"r": 1}
+    assert env.held()["r"] == 1
     squeeze = -env.data.actuator_force[env.grip_act[0]] / 2  # each finger gets half the tendon force
     assert abs(squeeze - cfg.sim.gripper_force) < 1.0
-    assert env.data.body(BRICKS[2].name).xpos[2] > th + 0.05, "brick should be lifted"
+    assert env.data.body(CUPS[1].name).xpos[2] > th + 0.05, "cup should be lifted"
 
 
 def test_fingers_move_at_franka_speed(env):
@@ -222,7 +129,7 @@ def test_fingers_move_at_franka_speed(env):
     width = lambda: env.data.qpos[env.finger_qadr[0]].sum()  # noqa: E731
     w0 = width()
     for _ in range(10):  # 0.2 s
-        env.apply_action(np.tile(HOME_Q, 2), np.array([0.0, 1.0]))
+        env.apply_action(HOME_Q, np.array([0.0]))
         env.step()
     per_finger = (w0 - width()) / 2 / 0.2
     assert 0.04 < per_finger < 0.055, per_finger
@@ -236,29 +143,15 @@ def test_reset_is_seeded(env):
 
 
 def test_ik_reaches_targets(cfg):
-    ik = BimanualIK(cfg.sim, cfg.ik, 0.02)
+    ik = ArmIK(cfg.sim, cfg.ik, 0.02)
     rng = np.random.default_rng(0)
-    p0 = {a: ik.tcp_pose(a) for a in "lr"}
+    p0, q0 = ik.tcp_pose("r")
     for _ in range(5):
-        offs = {a: rng.uniform([-0.1, -0.1, -0.15], [0.1, 0.1, 0.05]) for a in "lr"}
-        for a in "lr":
-            ik.set_target(a, p0[a][0] + offs[a], p0[a][1])
+        ik.set_target("r", p0 + rng.uniform([-0.1, -0.1, -0.15], [0.1, 0.1, 0.05]), q0)
         for _ in range(100):
             ik.solve()
         for a, (pos_err, rot_err) in ik.errors().items():
             assert pos_err < 0.005 and rot_err < np.deg2rad(3), (a, pos_err, rot_err)
-
-
-def test_ik_keeps_arms_apart(cfg):
-    """With avoid_arm_collisions, commanding both TCPs to the same point must not make the arms intersect."""
-    ik = BimanualIK(cfg.sim, cfg.ik.model_copy(update={"avoid_arm_collisions": True}), 0.02)
-    meet = np.array([0.5, 0.0, 1.0])
-    for a in "lr":
-        ik.set_target(a, meet, ik.tcp_pose(a)[1])
-    for _ in range(300):
-        ik.solve()
-    gap = np.linalg.norm(ik.tcp_pose("l")[0] - ik.tcp_pose("r")[0])
-    assert gap > cfg.ik.collision_margin
 
 
 def test_set_state_replay_determinism(env):
@@ -268,8 +161,8 @@ def test_set_state_replay_determinism(env):
     rng = np.random.default_rng(0)
     q = env.data.ctrl[env.arm_act].copy()
     for _ in range(60):
-        q = q + rng.normal(scale=0.01, size=14)
-        env.apply_action(q, rng.uniform(0, 1, 2))
+        q = q + rng.normal(scale=0.01, size=7)
+        env.apply_action(q, rng.uniform(0, 1, 1))
         ctrls.append(env.data.ctrl.copy())
         env.step()
     final = env.data.qpos.copy()
@@ -295,10 +188,10 @@ def _fake_step(env, i):
     return {
         "time": float(i), "wall_time": time.monotonic(),
         "obs": env.observe(),
-        "action": {"joint_pos": np.zeros(16), "ee_pose": np.zeros(16)},
+        "action": {"joint_pos": np.zeros(8), "ee_pose": np.zeros(8)},
         "sim": {"state": env.get_state()},
         "success": False,
-        "teleop": {"head": np.zeros(7), "engaged": np.zeros(2, bool), "tracked": np.ones(2, bool), "rtt_ms": 12.0,
+        "teleop": {"head": np.zeros(7), "engaged": np.zeros(1, bool), "tracked": np.ones(1, bool), "rtt_ms": 12.0,
                    "left": {"source": 1, "pose": np.zeros(7), "buttons": np.zeros(8), "joints": np.zeros((25, 7)), "pinch": np.zeros(2)},
                    "right": {"source": 1, "pose": np.zeros(7), "buttons": np.zeros(8), "joints": np.zeros((25, 7)), "pinch": np.zeros(2)}},
     }
@@ -324,8 +217,8 @@ def test_recorder_state_machine_and_hdf5(cfg, env, tmp_path):
     rec.flush()
     assert rec.state == RecState.IDLE
     meta, data = read_episode(path)
-    assert meta["success"] is True and meta["num_steps"] == 10 and meta["task"] == "build_tower"
-    assert data["obs/joint_pos"].shape == (10, 14)
+    assert meta["success"] is True and meta["num_steps"] == 10 and meta["task"] == "stack_cups"
+    assert data["obs/joint_pos"].shape == (10, 7) and data["action/joint_pos"].shape == (10, 8)
     assert data["teleop/left/joints"].shape == (10, 25, 7)
     assert data["sim/state"].shape == (10, env.state_size)
     assert "<mujoco" in meta["model_xml"]
@@ -368,34 +261,24 @@ def test_lerobot_export(cfg, env, tmp_path):
     ds = LeRobotDataset("test/quest", root=tmp_path / "lerobot")
     assert ds.num_episodes == 2 and ds.num_frames == 24 and ds.fps == cfg.sim.control_hz
     item = ds[0]
-    assert item["observation.state"].shape == (16,) and item["action"].shape == (16,)
+    assert item["observation.state"].shape == (8,) and item["action"].shape == (8,)
     assert item["observation.images.cam_high"].shape == (3, 96, 128)
-    assert item["observation.environment_state"].shape == (7 * len(BRICKS),)
+    assert item["observation.environment_state"].shape == (7 * len(CUPS),)
 
 
-def test_tower_haptics(cfg):
-    """Each placed level fires the double pulse once (not the plain click), the finished tower the triple pulse
-    on both hands, and pulling a brick off the unclick blip."""
+def test_stack_haptics(cfg):
+    """Each stacked cup fires the double pulse once, the finished stack the triple pulse."""
     rt = Runtime(cfg)
     events = []
     rt.add_listener(events.append)
     env = rt.env
-    for b, (p, yaw) in zip(BRICKS, tower_poses([0.45, 0.0, env.table_height], 0.3)):
-        set_brick_pose(env.data, b.name, p + [0, 0, 0.0005], yaw)
-    top = env.model.body(BRICKS[-1].name).id
+    for level, c in enumerate(CUPS):
+        set_cup_pose(env.data, c.name, [0.45, 0.0, env.table_height + level * (NEST_DZ + 0.002)])
     for t in range(60):
-        env.data.xfrc_applied[top, :3] = [0, 0, -15] if 10 <= t < 20 else [0, 0, 0]
         env.step()
         rt._task_feedback(t * 0.02, env.success())
-    pulses = lambda: [(e["intensity"], e["ms"], e["repeat"], e["gap_ms"]) for e in events if e["type"] == "haptic"]  # noqa: E731
-    assert pulses().count(HAPTIC_PLACED) == 2 * LEVELS  # no holder recorded -> both hands
-    assert pulses().count(HAPTIC_CLICK) == 0
-    assert pulses().count(HAPTIC_COMPLETE) == 2
+    pulses = [(e["intensity"], e["ms"], e["repeat"], e["gap_ms"]) for e in events if e["type"] == "haptic"]
+    assert pulses.count(HAPTIC_PLACED) == LEVELS  # no holder recorded -> the arm's hand
+    assert pulses.count(HAPTIC_COMPLETE) == 1
     sounds = [e["name"] for e in events if e["type"] == "sound"]
     assert sounds.count("placed") == LEVELS and sounds.count("complete") == 1 and sounds.count("area") == 1
-    events.clear()
-    _push(env, len(BRICKS) - 1, [0, 0, 2 * CLUTCH_PULL_N], steps=1, hold_base=True)
-    rt._task_feedback(2.0, env.success())
-    assert HAPTIC_UNCLICK in pulses()
-    sounds = [e["name"] for e in events if e["type"] == "sound"]
-    assert "unclick" in sounds
