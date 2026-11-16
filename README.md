@@ -11,7 +11,7 @@ robot learning.**
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 <p align="center">
-  <img src="docs/media/demo.gif" alt="A Franka arm picks up the green cup and puts it into the red cup" width="720">
+  <img src="docs/media/demo.gif" alt="A Franka arm picks up the red cup and puts it into the green cup" width="720">
   <br><sub>A Franka Panda arm stacks the cups. This clip is scripted by
   <a href="scripts/make_media.py">scripts/make_media.py</a>, using the same IK, gripper and physics as the headset.</sub>
 </p>
@@ -76,16 +76,17 @@ You don't need a headset for a first look: the dashboard shows the live scene an
 
 ## The task: stack the cups
 
-<p align="center"><img src="docs/media/cups.png" alt="The red and the green cup side by side, and the green cup on top of the red one" width="900"></p>
+<p align="center"><img src="docs/media/cups.png" alt="The green and the red cup side by side, and the red cup on top of the green one" width="900"></p>
 
-There are two tapered **cups** (taken from the `mujoco_toy-project` cup model), a 🟥 **red** one and a 🟩 **green**
-one, in every episode; only where they start on the table changes. Your job: **put the green cup on top of the red
-cup**, wherever the red cup is. There is no target area on the table.
+The scene is **`mujoco_toy-project`'s `models/panda_scene.xml`**, imported as it is: the Panda and two tapered
+cups, a 🟩 **green** one and a 🟥 **red** one (the toy's `cup_green.xml` / `cup_red.xml`). Only where the cups start
+on the table changes per episode. Your job: **put the red cup on top of the green cup**, wherever the green cup
+is. There is no target area on the table.
 
-**When does it count as done?** Both cups stand upright, the green cup rests centred (within 1 cm) inside the red
+**When does it count as done?** Both cups stand upright, the red cup rests centred (within 1 cm) inside the green
 one, the gripper has let go, and both are standing still. Recording then stops on its own one second later.
 
-The **goal panel** (in the headset and on the dashboard) shows the target, *0 / 1* until the green cup is in the red
+The **goal panel** (in the headset and on the dashboard) shows the target, *0 / 1* until the red cup is in the green
 one, then *1 / 1*.
 
 ### What is simulated, and how closely
@@ -132,8 +133,8 @@ uv sync                                # 2. Python environment (.venv/)
 uv run qc doctor                       # 4. check that everything is in place
 ```
 
-The robot (`models/franka_emika_panda/panda.xml`, MuJoCo Menagerie's Panda with the toy project's TCP site and
-wrist camera) and the cup (`models/cup.xml`) are loaded from **`../mujoco_toy-project`**. If your checkout is
+The scene (`models/panda_scene.xml`: MuJoCo Menagerie's Panda with the toy project's TCP site and wrist camera,
+the green and red cup, and a `front` camera) is loaded from **`../mujoco_toy-project`** and set on a table. If your checkout is
 somewhere else, set `QC_TOY_PROJECT=/path/to/mujoco_toy-project`. Changes to those model files show up here
 the next time you start `qc serve`.
 
@@ -260,7 +261,7 @@ explicitly as a *success* or a *failure*.
 **Tips for good demonstrations:**
 
 - Grab cups from above, just below the rim: lower down, the fingers hit the rim of the cup below when you nest them.
-- Hold the green cup centred over the red one and lower it until it is about a centimetre above its resting place,
+- Hold the red cup centred over the green one and lower it until it is about a centimetre above its resting place,
   then open the gripper and let it drop in. The double pulse tells you it is in its spot.
 - Do it the same way every time (similar grasps and motions), so the dataset is consistent.
 
@@ -302,23 +303,23 @@ docstring at the top of [questcollect/recorder.py](questcollect/recorder.py).
 | `obs/joint_pos`, `obs/joint_vel` | (T, 7) | joint angles and velocities |
 | `obs/gripper_width` | (T, 1) | finger opening in metres (0 to 0.08) |
 | `obs/ee_pose` | (T, 7) | gripper pose: position + quaternion (w x y z), world frame |
-| `obs/objects` | (T, 2, 7) | the red and green cup poses (centre of each cup's bottom) |
+| `obs/objects` | (T, 2, 7) | the green and red cup poses (centre of each cup's bottom) |
 | `action/joint_pos` | (T, 8) | **[7 joints, gripper]**; gripper 0 = closed, 1 = open |
 | `action/ee_pose` | (T, 8) | where the gripper was sent: pose, gripper value |
 | `sim/state` | (T, 217) | the complete simulator state before each step |
 | `success` | (T,) | whether the stack is finished and standing |
-| `progress` | (T,) | 1 while the green cup sits in the red one, else 0 |
+| `progress` | (T,) | 1 while the red cup sits in the green one, else 0 |
 | `teleop/*` | | head pose; per hand (both, also the one without an arm) the raw controller pose and buttons or 25 hand-joint poses, pinch distances; engaged / tracked flags of the arm; latency |
 | `time`, `wall_time` | (T,) | simulation time and PC clock |
 | *file attributes* | | task, instruction, operator, input mode, success, random seed, date, duration, the full scene (MJCF), the config, camera names, and the cup definition |
 
 **Camera images are not stored while recording.** Because the complete simulator state is saved, the exporter
 replays every step exactly and renders the cameras afterwards, at whatever resolution you choose. Recording stays
-light, and you can re-export with other image sizes without recording again. The cameras are the ones from
-`mujoco_toy-project`: `left` and `right` (front-left and front-right of the workspace) and `wrist` (on the hand,
-looking along the fingers):
+light, and you can re-export with other image sizes without recording again. The cameras: `front` and `wrist`
+(on the hand, looking along the fingers) come with the toy scene; `left` and `right` (front-left and front-right of
+the workspace) are added here:
 
-<p align="center"><img src="docs/media/cameras.png" alt="The three recorded camera views: left, right, wrist" width="900"></p>
+<p align="center"><img src="docs/media/cameras.png" alt="The four recorded camera views: front, left, right, wrist" width="900"></p>
 
 **The LeRobot dataset** contains:
 
@@ -422,7 +423,7 @@ Runtime settings live in [config.yaml](config.yaml). Use another file with `uv r
 | `ik.iterations` | 2 | IK solver iterations per control step |
 | `record.out_dir` | `data/episodes` | where episodes are saved |
 | `record.countdown_s` | 3 | countdown before recording starts (s) |
-| `record.cameras` | the three cameras | cameras shown on the dashboard and exported |
+| `record.cameras` | the four cameras | cameras shown on the dashboard and exported |
 | `record.operator` | `operator` | default operator name stored in episodes |
 | `server.host`, `port`, `https_port`, `cert_dir` | 0.0.0.0, 8000, 8443, `certs` | network address, ports and certificate folder |
 
@@ -444,7 +445,7 @@ panels follow these automatically. The arm follows the right controller (`ARMS`)
 | The grasp-point dot is red | The arm can't get there: too far from its base (more than ~0.8 m), right in front of its own base, or the wrist is twisted to its limit. Move back towards the robot or turn your wrist back. |
 | No vibration | Vibration needs the controllers; with hand tracking there is nothing to vibrate. |
 | No sound | Sound starts when you press **Enter VR** (browsers block audio before a click). Check **Sound** in the wrist menu and the headset volume. |
-| The green cup is on the red one but it doesn't count | Both cups must be upright, green must be inside red (not the other way round) and centred within 1 cm, and you must let go. |
+| The red cup is on the green one but it doesn't count | Both cups must be upright, red must be inside green (not the other way round) and centred within 1 cm, and you must let go. |
 | A cup slips in the gripper | Raise `sim.gripper_force` in `config.yaml`. |
 | Laggy over Wi-Fi | Use the USB cable, or move closer to a 5/6 GHz access point. |
 | `EGLError` printed when a command exits | Harmless: MuJoCo's GL context is cleaned up after Python has shut down. |
@@ -485,7 +486,7 @@ protocol, and which files have to change together.
 - [MuJoCo](https://mujoco.org) for physics, [mink](https://github.com/kevinzakka/mink) for inverse kinematics,
   [three.js](https://threejs.org/) for rendering, [LeRobot](https://github.com/huggingface/lerobot) for the dataset
   format, and Meta's [IWER](https://github.com/meta-quest/immersive-web-emulation-runtime) for headset-free testing.
-- The robot and cup models are imported from `mujoco_toy-project` (`models/`); the camera poses follow its scene.
+- The scene (robot, cups, front camera) is imported from `mujoco_toy-project` (`models/panda_scene.xml`).
 - Franka Hand speed and force from its published specifications.
 
 ## License

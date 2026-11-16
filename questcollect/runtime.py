@@ -20,7 +20,7 @@ from questcollect.ik import ArmIK
 from questcollect.protocol import FLAG_ENGAGED_L, FLAG_ENGAGED_R, FLAG_RECORDING, InputFrame, pack_pose_frame
 from questcollect.recorder import Recorder, RecState, list_episodes, read_episode
 from questcollect.scene_export import body_poses, export_scene
-from questcollect.sim import ARMS, CUPS, INSTRUCTION, LEVELS, TASK, CameraRenderer, PandaEnv, task_spec
+from questcollect.sim import ARM_PREFIX, ARMS, CUPS, INSTRUCTION, LEVELS, TASK, CameraRenderer, PandaEnv, task_spec
 from questcollect.teleop import Teleop
 
 log = logging.getLogger(__name__)
@@ -57,7 +57,7 @@ class Runtime:
         self._scene_json, self._scene_blob = export_scene(self.env.model)
 
         m = self.env.model
-        self._arm_bodies = {a: {b for b in range(m.nbody) if m.body(b).name.startswith(f"{a}_")} for a in ARMS}
+        self._arm_bodies = {a: {b for b in range(m.nbody) if m.body(b).name.startswith(ARM_PREFIX[a])} for a in ARMS}
         self._table_body = m.body("table").id
 
         self._input: InputFrame | None = None

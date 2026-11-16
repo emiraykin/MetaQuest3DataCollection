@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 QuestCollect: teleoperate one simulated Franka Panda arm (MuJoCo) from a Meta Quest 3 via a WebXR page, record
-demonstrations of one task (`stack_cups`: put the green cup from `mujoco_toy-project` on top of the red one) to HDF5, export to
+demonstrations of one task (`stack_cups`: put the red cup on top of the green one, in `mujoco_toy-project`'s scene) to HDF5, export to
 LeRobot. The right controller/hand drives the arm (`sim.ARMS = ("r",)`); the left controller only sends commands.
 Python 3.12 backend in a flat package (`questcollect/`, one module per pipeline stage), TypeScript/three.js/React
 frontend (`web/`). Two human docs, keep both in sync with behaviour changes: `README.md` (users: install, controls,
@@ -52,11 +52,13 @@ binary pose frames back to headset + JSON status/events to the dashboard (`/ws/d
   `POST /api/command` → `Runtime.command` queue; don't mutate sim state from the server thread.
 - **Wire protocol**: `protocol.py` and `web/src/protocol.ts` are hand-mirrored binary layouts (little endian,
   fixed float counts, 16-byte headers). Change both together and keep `test_protocol_roundtrip` passing.
-- **Imported models**: the Panda and the cup are loaded from mujoco_toy-project's `models/` (`sim.TOY_PROJECT`, default
-  `../mujoco_toy-project`, override with `QC_TOY_PROJECT`); importing `sim` fails with a FileNotFoundError if they're
-  missing. Don't copy model geometry into this repo; adapt the loaded spec in `_add_arm` / `_add_task` instead.
-- **Scene + task**: `sim.py` builds the scene programmatically with `MjSpec` (one arm, prefix `r_`, at the middle of
-  the near table edge) and holds the one task (`CUPS` constants, `_add_task`, `_randomize_task`,
+- **Imported scene**: `build_spec` loads mujoco_toy-project's `models/panda_scene.xml` (`sim.TOY_PROJECT`, default
+  `../mujoco_toy-project`, override with `QC_TOY_PROJECT`), drops its floor and attaches it on the table top with the
+  toy's names (`panda_*` via `ARM_PREFIX`, `green_cup`, `red_cup`, camera `front`). Importing `sim` fails with a
+  FileNotFoundError if the files are missing. Don't copy model geometry into this repo; change the toy scene, or
+  adapt the loaded spec in `_adapt_arm` / `_adapt_cups`.
+- **Scene + task**: `sim.py` builds the scene programmatically with `MjSpec` (the toy scene's arm at the middle of
+  the near table edge) and holds the one task (`CUPS` constants, `_adapt_cups`, `_randomize_task`,
   `stack_progress`, `held_cups`, `_task_success`). The toy cup is a thin cylinder base plus a ring of thin tilted boxes
   (MuJoCo only collides convex shapes); body frame = centre of the cup bottom. `cup_stacked` mirrors the toy
   project's `_check_cups_stacked` (upright, xy within `TOL_XY`, height above the lower cup in `NEST_DZ_RANGE`).

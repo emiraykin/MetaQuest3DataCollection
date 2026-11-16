@@ -27,7 +27,7 @@ ik:
 record:
   out_dir: data/episodes
   countdown_s: 3
-  cameras: [left, right, wrist]
+  cameras: [front, left, right, wrist]
   operator: operator
 
 server:

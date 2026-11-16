@@ -2,7 +2,7 @@
 
     MUJOCO_GL=egl uv run python scripts/make_media.py
 
-- demo.gif      scripted stack_cups demo (green into red) (IK-driven, same control stack as teleop)
+- demo.gif      scripted stack_cups demo (red into green) (IK-driven, same control stack as teleop)
 - cups.png      the two cups and the goal stack (close-ups)
 - cameras.png   the three recorded camera views (what goes into the LeRobot dataset)
 """
@@ -40,8 +40,8 @@ def label(img: Image.Image, text: str) -> Image.Image:
     return img
 
 
-# Deterministic demo layout: cup -> (x, y). The red cup stays where it is; the green one goes into it.
-DEMO_LAYOUT = {"red_cup": (0.45, 0.05), "green_cup": (0.56, -0.2)}
+# Deterministic demo layout: cup -> (x, y). The green (base) cup stays where it is; the red one goes into it.
+DEMO_LAYOUT = {"green_cup": (0.45, 0.05), "red_cup": (0.56, -0.2)}
 GRASP_Z = CUP_H - 0.012  # just below the rim: lower, the fingers would hit the rim of the cup below when nesting
 
 
@@ -160,7 +160,7 @@ def cups_png(cfg, path: Path, size=(480, 360)) -> None:
         label(shot({c.name: [x0, 0.09 - 0.09 * i, th] for i, c in enumerate(CUPS)},
                    free_camera(0.4, 160, -30, (x0, 0.0, th + 0.03))), "The 2 cups"),
         label(shot({c.name: [x0, 0.0, th + i * NEST_DZ] for i, c in enumerate(CUPS)},
-                   free_camera(0.3, 150, -25, (x0, 0.0, th + 0.05))), "Goal: green on top of red"),
+                   free_camera(0.3, 150, -25, (x0, 0.0, th + 0.05))), f"Goal: {CUPS[1].label} on top of {CUPS[0].label}"),
     ]
     renderer.close()
     sheet = Image.new("RGB", (size[0] * len(panels), size[1]))

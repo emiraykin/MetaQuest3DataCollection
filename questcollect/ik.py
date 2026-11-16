@@ -6,7 +6,7 @@ import mink
 import numpy as np
 
 from questcollect.config import IKConfig, SimConfig
-from questcollect.sim import ARM_JOINTS, ARMS, HOME_Q, build_spec
+from questcollect.sim import ARM_JOINTS, ARM_PREFIX, ARMS, HOME_Q, build_spec
 
 class ArmIK:
     """Keeps its own kinematic configuration (robots only) that tracks EE targets smoothly."""
@@ -17,16 +17,16 @@ class ArmIK:
         self.model = build_spec(sim_cfg, with_task=False).compile()
         self.configuration = mink.Configuration(self.model)
         m = self.model
-        self.arm_qadr = np.array([m.joint(f"{a}_{j}").qposadr[0] for a in ARMS for j in ARM_JOINTS])
+        self.arm_qadr = np.array([m.joint(f"{ARM_PREFIX[a]}{j}").qposadr[0] for a in ARMS for j in ARM_JOINTS])
 
         self.frame_tasks = {
-            a: mink.FrameTask(f"{a}_tcp", "site", position_cost=cfg.position_cost,
+            a: mink.FrameTask(f"{ARM_PREFIX[a]}tcp", "site", position_cost=cfg.position_cost,
                               orientation_cost=cfg.orientation_cost, lm_damping=1.0)
             for a in ARMS
         }
         self.posture = mink.PostureTask(m, cost=cfg.posture_cost)
         self.tasks = [*self.frame_tasks.values(), self.posture]
-        vel = {f"{a}_{j}": cfg.max_joint_vel for a in ARMS for j in ARM_JOINTS}
+        vel = {f"{ARM_PREFIX[a]}{j}": cfg.max_joint_vel for a in ARMS for j in ARM_JOINTS}
         self.limits = [mink.ConfigurationLimit(m), mink.VelocityLimit(m, vel)]
         self.reset(np.tile(HOME_Q, len(ARMS)))
 
@@ -36,7 +36,7 @@ class ArmIK:
         self.configuration.update(q)
         self.posture.set_target(q)
         for a in ARMS:
-            self.frame_tasks[a].set_target(self.configuration.get_transform_frame_to_world(f"{a}_tcp", "site"))
+            self.frame_tasks[a].set_target(self.configuration.get_transform_frame_to_world(f"{ARM_PREFIX[a]}tcp", "site"))
 
     def follow(self, arm_q: np.ndarray) -> None:
         """Keep the IK within max_lead rad of the measured joint angles (call before solve).
@@ -51,7 +51,7 @@ class ArmIK:
         self.configuration.update(q)
 
     def tcp_pose(self, arm: str) -> tuple[np.ndarray, np.ndarray]:
-        T = self.configuration.get_transform_frame_to_world(f"{arm}_tcp", "site")
+        T = self.configuration.get_transform_frame_to_world(f"{ARM_PREFIX[arm]}tcp", "site")
         return T.translation().copy(), T.rotation().wxyz.copy()
 
     def set_target(self, arm: str, pos: np.ndarray, wxyz: np.ndarray) -> None:
