@@ -118,7 +118,6 @@ export interface Status {
   success_seen: boolean;
   progress: number; // cups correctly stacked on the base
   levels: number;
-  in_area: boolean; // base cup stands inside the build area
   /** Robot arms, each driven by the controller/hand of that side; per-arm maps below only have these keys. */
   arms: Arm[];
   held: Partial<Record<Arm, string | null>>;
@@ -155,7 +154,6 @@ export interface TaskSpec {
   cups: { name: string; label: string; rgba: number[] }[];
   /** Stacking order; pos relative to the base cup's bottom centre, metres. */
   goal: { cup: number; pos: [number, number, number] }[];
-  area: { center: [number, number]; half: [number, number] };
 }
 
 export async function fetchTask(): Promise<TaskSpec> {

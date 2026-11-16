@@ -197,8 +197,6 @@ def doctor():
     _headless_gl()
     import mujoco
 
-    from questcollect.sim import PANDA_XML, PandaEnv
-
     def row(ok: bool, label: str, hint: str = ""):
         typer.secho(f"  {'✓' if ok else '✗'} {label}" + (f"  — {hint}" if hint and not ok else ""),
                     fg="green" if ok else "red")
@@ -211,7 +209,12 @@ def doctor():
             return False
 
     cfg = load_config()
-    row(PANDA_XML.exists(), "menagerie Panda model", "run scripts/fetch_assets.sh")
+    try:
+        from questcollect.sim import TOY_PROJECT, PandaEnv
+    except FileNotFoundError as e:
+        row(False, "mujoco_toy-project models", str(e))
+        raise typer.Exit(1)
+    row(True, f"mujoco_toy-project models ({TOY_PROJECT})")
     env = PandaEnv(cfg)
     row(True, f"scene compiles ({env.model.nbody} bodies, {env.model.nu} actuators)")
     row(render_ok(env.model), f"offscreen rendering (MUJOCO_GL={os.environ['MUJOCO_GL']})",

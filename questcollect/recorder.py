@@ -14,13 +14,13 @@ meta (file attrs): schema_version, task, instruction, operator, input_mode, succ
 /obs/joint_vel                (T, 7)
 /obs/gripper_width            (T, 1)      finger opening [m] (0 .. 0.08)
 /obs/ee_pose                  (T, 7)      tcp [x y z qw qx qy qz] world
-/obs/objects                  (T, 3, 7)   cup poses, bottom-centre of each cup, order = meta objects
+/obs/objects                  (T, 2, 7)   cup poses, bottom-centre of each cup, order = meta objects
                                           (privileged, sim only)
 /action/joint_pos             (T, 8)      [7 joints, grip]; grip in [0 closed, 1 open]
 /action/ee_pose               (T, 8)      [xyz qwxyz, grip] IK target
 /sim/state                    (T, S)      mj_getState(mjSTATE_INTEGRATION) before the step; PandaEnv.set_state
 /success                      (T,)        task success predicate per step (stack complete and released)
-/progress                     (T,)        cups correctly stacked on the base so far (0..2)
+/progress                     (T,)        cups correctly stacked on the base so far (0..1)
 /teleop/head                  (T, 7)      XR head pose [x y z qx qy qz qw]
 /teleop/{left,right}/source   (T,)        0 none, 1 controller, 2 hand
 /teleop/{left,right}/pose     (T, 7)      raw XR control pose
@@ -48,7 +48,7 @@ import yaml
 
 from questcollect.sim import (CUP_H, CUP_R_BOTTOM, CUP_R_TOP, CUPS, INSTRUCTION, NEST_DZ, OBJECTS, TASK)
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 AUTO_STOP_TAIL_S = 1.0
 
 

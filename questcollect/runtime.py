@@ -83,7 +83,6 @@ class Runtime:
         self._reach = {a: False for a in ARMS}
         self._engaged = {a: False for a in ARMS}
         self._warn_sound_at: dict[tuple[str, str | None], float] = {}
-        self._base_in_area = False
         self._held: dict[str, int | None] = {a: None for a in ARMS}
         self._last_holder: list[str | None] = [None] * len(CUPS)
         self._progress = 0
@@ -176,7 +175,6 @@ class Runtime:
         self._last_holder = [None] * len(CUPS)
         self._progress = 0
         self._complete = False
-        self._base_in_area = False
         self.ik.reset(obs["joint_pos"])
         self.teleop.reset({a: self._ik_pose(a) for a in ARMS})
 
@@ -387,13 +385,6 @@ class Runtime:
             self._toast(f"{CUPS[level].label} stacked ({level + 1}/{len(CUPS)})", "success")  # base = 1
         self._progress = progress
 
-        # Base cup set down (not held) inside the build area: a soft confirmation, once per placement.
-        base_in = self.env.in_area() and 0 not in held.values()
-        if base_in and not self._base_in_area:
-            self._sound("area", self._last_holder[0])
-            self._toast(f"{CUPS[0].label} is in the build area", "info")
-        self._base_in_area = base_in
-
         if success and not self._complete:
             self._pattern(None, HAPTIC_COMPLETE, now, "complete")
         self._complete = success
@@ -462,7 +453,6 @@ class Runtime:
             "success_seen": rec.success_seen,
             "progress": self._progress,
             "levels": LEVELS,
-            "in_area": self.env.in_area(),
             "held": {a: (None if b is None else CUPS[b].name) for a, b in self._held.items()},
             "operator": self.cfg.record.operator,
             "arms": list(ARMS),

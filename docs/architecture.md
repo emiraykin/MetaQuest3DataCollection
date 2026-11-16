@@ -84,7 +84,7 @@ Rule: the server never touches simulation state directly. Anything that changes 
 | --- | --- | --- |
 | `GET /xr/`, `/dashboard/` | → browser | the built web pages (`web/dist`) |
 | `GET /api/scene`, `/api/scene.bin` | → browser | visual geometry: bodies, geoms, materials (JSON) + mesh vertices/faces (binary) |
-| `GET /api/task` | → browser | the goal as data: cup shape, cups, where each goes, the build area (`sim.task_spec()`) |
+| `GET /api/task` | → browser | the goal as data: cup shape, cups, where each goes (`sim.task_spec()`) |
 | `GET /api/status` | → browser | the latest status dict (same as on the websockets) |
 | `GET /api/episodes`, `DELETE /api/episodes?path=` | ↔ | list / delete saved episodes |
 | `POST /api/command` | → server | `{"name": ..., "args": {...}}`, queued to the sim thread |
@@ -155,22 +155,27 @@ than 3 cm away from what the IK can reach, the arm is flagged *out of reach*.
 
 [questcollect/sim.py](../questcollect/sim.py) builds everything in code with `MjSpec`:
 
-- **Robot.** One Franka Panda arm from MuJoCo Menagerie (prefix `r_`, driven by the right controller) at the
+- **Imported models.** The Panda (`models/franka_emika_panda/panda.xml`) and the cup (`models/cup.xml`) are
+  loaded from mujoco_toy-project (`TOY_PROJECT`: `../mujoco_toy-project`, or `QC_TOY_PROJECT`) with `MjSpec.from_file`
+  and attached; `sim.py` only adds the table, the cameras and teleop settings on top. Cup dimensions
+  (`CUP_R_BOTTOM`, `CUP_R_TOP`, `CUP_H`) are measured from the toy cup's geoms.
+- **Robot.** One Franka Panda arm (Menagerie's, with the toy project's `tcp` site and `wrist` camera; prefix `r_`, driven by the right controller) at the
   middle of the near table edge, gravity-compensated like the real controller. The hand has a `tcp` site (the
   point the arm is steered by), a wrist camera and an operator-only grasp-point marker.
 - **Gripper.** A stiff servo on the finger tendon whose force is capped at `sim.gripper_force` (40 N), with the
   target moving at the real Franka Hand's 50 mm/s. The four small fingertip pads from Menagerie are merged into
   one flat pad so a thin cup wall can't wedge between them.
-- **Cups.** The tapered cup from `mujoco_toy-project` (`generate_cup.py`), rebuilt in `_cup_parts`: a thin
-  cylinder base plus `CUP_N_WALL` thin tilted boxes, because MuJoCo only collides convex shapes (a cup mesh would
-  act like a solid cylinder). Nested, a cup rests `NEST_DZ` (33 mm) above the one below.
+- **Cups.** Two copies of the toy project's tapered cup (red and green via materials): a thin cylinder base plus
+  thin tilted boxes, because MuJoCo only collides convex shapes (a cup mesh would act like a solid cylinder). Shape,
+  mass and friction come from `cup.xml`; `_add_task` only sets the colour and contact priority/stiffness. Nested, a cup rests `NEST_DZ` (33 mm) above the one below.
 - **Contacts.** Stiff contact parameters (`RIGID_SOLREF`, `RIGID_SOLIMP`), elliptic friction cones and
   `impratio` 10, so the arm doesn't sink into things and grasps don't creep.
 - **Progress and success.** `stack_progress` counts cups, bottom-up, that rest upright (`TOL_TILT`) inside the
   one below: centred within `TOL_XY` and `NEST_DZ_RANGE` above it, the same check as the toy project's
-  `_check_cups_stacked`. It is 0 unless the base cup's rim lies completely inside the build area.
-  `_task_success` = all cups stacked, nothing held, and every cup slower than 2 cm/s.
-- **Cameras.** `cam_high` (above the table, from the operator's right), `cam_low`, `cam_wrist`. Geom group 5
+  `_check_cups_stacked`. There is no build area: it counts anywhere on the table. With the two cups (red base,
+  green on top) it is 0 or 1. `_task_success` = all cups stacked, nothing held, and every cup slower than 2 cm/s.
+- **Cameras.** `left`, `right` (front-left / front-right of the workspace) and `wrist` (on the hand), with the poses from
+  `mujoco_toy-project` shifted up onto the table. Geom group 5
   (`OPERATOR_GROUP`) holds visuals only the operator sees (grasp-point markers); MuJoCo cameras render groups 0–2,
   so these never reach the recorded images.
 
@@ -210,7 +215,7 @@ than 3 cm away from what the IK can reach, the arm is flagged *out of reach*.
 | To change… | Edit | Notes |
 | --- | --- | --- |
 | a setting (rates, scale, workspace, ports, gripper force) | `config.yaml` | see the README's Configuration section |
-| the cups, their shape, the build area, tolerances | constants at the top of `questcollect/sim.py` | the goal panels follow automatically (`task_spec()`); old episodes keep their own `cups` attribute |
+| the cups, their shape, tolerances | constants at the top of `questcollect/sim.py` | the goal panels follow automatically (`task_spec()`); old episodes keep their own `cups` attribute |
 | vibration patterns | `HAPTIC_*` in `questcollect/runtime.py` | |
 | which controller drives the arm | `ARMS` in `questcollect/sim.py` | the arm's body/joint prefix; the other controller only sends commands |
 | sounds | `CUES` in `web/src/xr/sounds.ts` | names must match the server's `sound` events |

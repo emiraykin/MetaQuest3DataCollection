@@ -1,5 +1,8 @@
 """The MuJoCo side: scene (one Franka arm + table + cups), the stack_cups task, and the environment.
 
+The robot and the cups are imported from mujoco_toy-project's model files (TOY_PROJECT/models): this module adds
+the table and cameras around them and the settings teleoperation needs (gripper servo, contacts, grasp marker).
+
 World frame: z up, +x points away from the operator (towards the far table edge),
 +y is the operator's left. The arm base sits on the near table edge facing +x.
 """
@@ -7,6 +10,8 @@ World frame: z up, +x points away from the operator (towards the far table edge)
 from __future__ import annotations
 
 import io
+import os
+from pathlib import Path
 from typing import NamedTuple
 
 import mujoco
@@ -15,13 +20,19 @@ from PIL import Image
 
 from questcollect.config import ROOT, Config, SimConfig
 
-PANDA_XML = ROOT / "assets" / "third_party" / "mujoco_menagerie" / "franka_emika_panda" / "panda.xml"
+# mujoco_toy-project checkout whose models are imported; by default the sibling folder of this repository.
+TOY_PROJECT = Path(os.environ.get("QC_TOY_PROJECT", ROOT.parent / "mujoco_toy-project")).resolve()
+PANDA_XML = TOY_PROJECT / "models" / "franka_emika_panda" / "panda.xml"  # Menagerie Panda + tcp site, wrist camera
+CUP_XML = TOY_PROJECT / "models" / "cup.xml"
+for _f in (PANDA_XML, CUP_XML):
+    if not _f.exists():
+        raise FileNotFoundError(f"{_f} not found: clone mujoco_toy-project next to this repository "
+                                "or set QC_TOY_PROJECT to its folder")
 
 # One arm, driven by the operator's right hand/controller (the left controller only sends commands).
 ARMS = ("r",)
 ARM_JOINTS = [f"joint{i}" for i in range(1, 8)]
 HOME_Q = np.array([0.0, -0.3, 0.0, -2.2, 0.0, 1.9, 0.785])
-TCP_OFFSET = 0.1034  # flange-to-fingertip-center along the hand z axis
 GRIPPER_CTRL_MAX = 255.0  # Menagerie's ctrl range: 0 = closed, 255 = fully open
 # Gripper like the real Franka Hand (70 N continuous, 140 N peak, 50 mm/s per finger, 80 mm stroke):
 # a stiff position servo on the finger tendon whose force is capped at the configured grasp force, so
@@ -38,17 +49,31 @@ CYL = mujoco.mjtGeom.mjGEOM_CYLINDER
 OPERATOR_GROUP = 5       # geom group MuJoCo cameras don't render (they show 0-2): headset/dashboard only
 
 # -- task: stack_cups ------------------------------------------------------------------------------
-# Three tapered cups (from mujoco_toy-project's generate_cup.py; same colors every episode, start positions
-# randomized) that the operator nests into one stack. Cup body frames sit at the centre of the cup bottom.
-# MuJoCo only collides convex shapes, so a cup is a thin cylinder base plus a ring of thin tilted boxes.
+# Two copies of mujoco_toy-project's cup (models/cup.xml; same colors every episode, start positions randomized):
+# the operator puts the green one into the red one, anywhere on the table. Cup body frames sit at the centre of
+# the cup bottom. MuJoCo only collides convex shapes, so the toy cup is a thin cylinder base plus a ring of thin
+# tilted boxes.
 TASK = "stack_cups"
-CUP_R_BOTTOM = 0.028     # outer radius at the bottom; the Panda opens to 8 cm
-CUP_R_TOP = 0.036
-CUP_H = 0.07
-CUP_T = 0.003            # wall and base thickness
-CUP_N_WALL = 16          # boxes forming the wall
-CUP_DENSITY = 600        # plastic, about 35 g per cup
-CUP_FRICTION = 1.0
+
+
+def _cup_dims() -> tuple[float, float, float]:
+    """(outer radius at the bottom, at the rim, height) of the toy cup, measured from its geoms."""
+    m = mujoco.MjSpec.from_file(str(CUP_XML)).compile()
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    corners = []
+    for g in range(m.ngeom):
+        if m.geom_type[g] != BOX:
+            continue
+        half = m.geom_size[g]
+        for s in np.array(np.meshgrid([-1, 1], [-1, 1], [-1, 1])).T.reshape(-1, 3):
+            corners.append(d.geom_xpos[g] + d.geom_xmat[g].reshape(3, 3) @ (s * half))
+    corners = np.array(corners)
+    base = next(g for g in range(m.ngeom) if m.geom_type[g] == CYL)
+    return float(m.geom_size[base, 0]), float(np.hypot(*corners[:, :2].T).max()), float(corners[:, 2].max())
+
+
+CUP_R_BOTTOM, CUP_R_TOP, CUP_H = _cup_dims()
 
 
 class Cup(NamedTuple):
@@ -64,26 +89,17 @@ class Cup(NamedTuple):
 CUPS = (
     Cup("red_cup", (0.86, 0.15, 0.12, 1)),
     Cup("green_cup", (0.15, 0.65, 0.25, 1)),
-    Cup("yellow_cup", (0.98, 0.78, 0.1, 1)),
 )
 LEVELS = len(CUPS) - 1   # cups stacked on the base cup
 OBJECTS = tuple(c.name for c in CUPS)  # free-floating bodies whose poses are recorded
-INSTRUCTION = (f"Stack the cups in the taped area: {CUPS[0].label} at the bottom, then "
-               + ", ".join(c.label for c in CUPS[1:-1]) + f", and {CUPS[-1].label} on top.")
-# Height of a nested cup above the one below, measured in the sim (the flat wall boxes sit a bit higher than
-# a round cup would: CUP_T * CUP_H / (CUP_R_TOP - CUP_R_BOTTOM) = 26 mm). Only the goal picture uses it.
+INSTRUCTION = f"Put the {CUPS[1].label} on top of the {CUPS[0].label}."
+# Height of a nested cup above the one below, measured in the sim with the toy cup. Only the goal picture uses it.
 NEST_DZ = 0.033
 # Stacked: upright, centred on the cup below and resting inside it (as in mujoco_toy-project).
 TOL_TILT = np.deg2rad(15)
 TOL_XY = 0.01
 NEST_DZ_RANGE = (0.005, 0.05)
 STACK_STILL_MPS = 0.02
-# Build area: a taped square on the table (seen by the cameras, like tape on a real table). The stack only
-# counts when its base cup lies completely inside; cups never start in it.
-BUILD_AREA_CENTER = (0.45, 0.0)
-BUILD_AREA_HALF = (0.07, 0.07)
-TAPE_W = 0.006
-TAPE_RGBA = (0.92, 0.92, 0.88, 1)
 
 # Rigid contacts (cups, arm links, table top): timeconst 0.004 s (>= 2 * physics_dt for stability) and
 # impedance 0.99-0.999, so an arm pushing at full torque stays on the surface instead of sinking in.
@@ -91,60 +107,31 @@ RIGID_SOLREF = [0.004, 1]
 RIGID_SOLIMP = [0.99, 0.999, 0.0005, 0.5, 2]
 
 
-def _cup_parts() -> list[tuple]:
-    """(type, size, pos, quat) of the base and the wall boxes; the top leans outwards."""
-    tilt = np.arctan2(CUP_R_TOP - CUP_R_BOTTOM, CUP_H)
-    slant = np.hypot(CUP_R_TOP - CUP_R_BOTTOM, CUP_H)
-    mid_r = (CUP_R_BOTTOM + CUP_R_TOP) / 2 - CUP_T / 2
-    half_w = CUP_R_TOP * np.tan(np.pi / CUP_N_WALL) * 1.05  # a bit wider than the chord so neighbours overlap
-    parts = [(CYL, [CUP_R_BOTTOM, CUP_T / 2, 0], [0, 0, CUP_T / 2], [1, 0, 0, 0])]
-    for i in range(CUP_N_WALL):
-        a = 2 * np.pi * i / CUP_N_WALL
-        q = np.empty(4)
-        mujoco.mju_mulQuat(q, [np.cos(a / 2), 0, 0, np.sin(a / 2)], [np.cos(tilt / 2), 0, np.sin(tilt / 2), 0])
-        parts.append((BOX, [CUP_T / 2, half_w, slant / 2], [mid_r * np.cos(a), mid_r * np.sin(a), CUP_H / 2], q))
-    return parts
-
-
 def _add_task(spec: mujoco.MjSpec, th: float) -> None:
     for i, c in enumerate(CUPS):
         spec.add_material(name=f"{c.name}_mat", rgba=list(c.rgba), specular=0.4, shininess=0.6)
-        body = spec.worldbody.add_body(name=c.name, pos=[0.3 + 0.1 * i, 0.0, th])
-        body.add_freejoint(name=f"{c.name}_free")
-        # priority=1: cup contact params win against the table; finger pads (priority 2) win against cups.
-        for gtype, size, pos, quat in _cup_parts():
-            body.add_geom(type=gtype, size=size, pos=pos, quat=list(quat), material=f"{c.name}_mat",
-                          density=CUP_DENSITY, condim=4, friction=[CUP_FRICTION, 0.01, 0.001],
-                          solref=RIGID_SOLREF, solimp=RIGID_SOLIMP, priority=1)
-    _add_build_area(spec, th)
-
-
-def _add_build_area(spec: mujoco.MjSpec, th: float) -> None:
-    """Four tape strips (visual only) just above the table top, outlining the build area from the inside."""
-    (cx, cy), (hx, hy), t = BUILD_AREA_CENTER, BUILD_AREA_HALF, TAPE_W / 2
-    strips = [([cx, cy + s * (hy - t)], [hx, t]) for s in (-1, 1)] + \
-             [([cx + s * (hx - t), cy], [t, hy - 2 * t]) for s in (-1, 1)]
-    for i, (xy, half) in enumerate(strips):
-        spec.worldbody.add_geom(name=f"build_area_{i}", type=BOX, size=[*half, 0.0002], pos=[*xy, th + 0.0002],
-                                rgba=list(TAPE_RGBA), group=1, contype=0, conaffinity=0)
-
-
-def in_build_area(data: mujoco.MjData) -> bool:
-    """Whether the base cup's whole footprint (its rim, seen from above) lies inside the build area."""
-    xy = data.body(CUPS[0].name).xpos[:2]
-    return bool(np.all(np.abs(xy - BUILD_AREA_CENTER) + CUP_R_TOP <= BUILD_AREA_HALF))
+        frame = spec.worldbody.add_frame(pos=[0.3 + 0.1 * i, 0.0, th])
+        spec.attach(mujoco.MjSpec.from_file(str(CUP_XML)), prefix=f"{c.name}_", frame=frame)
+        body = spec.body(f"{c.name}_cup")
+        body.name = c.name
+        spec.joint(f"{c.name}_joint").name = f"{c.name}_free"
+        # The toy cup's shape, mass and friction stay; colour via a material (geom rgba back to the default, so
+        # the material wins and AppearanceRandomizer can vary it). priority=1: cup contact params win against the
+        # table; finger pads (priority 2) win against cups.
+        for g in body.geoms:
+            g.material, g.rgba = f"{c.name}_mat", [0.5, 0.5, 0.5, 1]
+            g.condim, g.priority, g.solref, g.solimp = 4, 1, RIGID_SOLREF, RIGID_SOLIMP
 
 
 def task_spec() -> dict:
-    """The mission as data, for the operator UI: cups, where each goes (relative to the base cup's bottom
-    centre, in stacking order), and the build area. Everything the UI shows of the goal comes from here."""
+    """The mission as data, for the operator UI: cups and where each goes (relative to the base cup's bottom
+    centre, in stacking order). Everything the UI shows of the goal comes from here."""
     return {
         "task": TASK,
         "instruction": INSTRUCTION,
         "cup": {"r_bottom": CUP_R_BOTTOM, "r_top": CUP_R_TOP, "height": CUP_H},
         "cups": [{"name": c.name, "label": c.label, "rgba": list(c.rgba)} for c in CUPS],
         "goal": [{"cup": i, "pos": [0.0, 0.0, i * NEST_DZ]} for i in range(len(CUPS))],
-        "area": {"center": list(BUILD_AREA_CENTER), "half": list(BUILD_AREA_HALF)},
     }
 
 
@@ -156,15 +143,14 @@ def set_cup_pose(data: mujoco.MjData, name: str, pos) -> None:
 
 
 def _randomize_task(model: mujoco.MjModel, data: mujoco.MjData, rng: np.random.Generator, th: float) -> None:
-    """Same cups every episode; only where they start on the table changes (non-overlapping, outside the
-    build area, within reach of the arm)."""
+    """Same cups every episode; only where they start on the table changes (non-overlapping, within reach of
+    the arm)."""
     placed: list[np.ndarray] = []
     r = CUP_R_TOP
     for c in CUPS:
         for _ in range(1000):
             xy = np.array([rng.uniform(0.30, 0.60), rng.uniform(-0.30, 0.30)])
-            to_area = np.maximum(np.abs(xy - BUILD_AREA_CENTER) - BUILD_AREA_HALF, 0.0)
-            if np.linalg.norm(to_area) > r + 0.02 and all(np.linalg.norm(xy - p) > 2 * r + 0.03 for p in placed):
+            if all(np.linalg.norm(xy - p) > 2 * r + 0.03 for p in placed):
                 break
         placed.append(xy)
         set_cup_pose(data, c.name, [*xy, th])
@@ -180,10 +166,7 @@ def cup_stacked(data: mujoco.MjData, lower: int, upper: int) -> bool:
 
 
 def stack_progress(model: mujoco.MjModel, data: mujoco.MjData) -> int:
-    """Number of cups (0..LEVELS) correctly stacked on the base, counted bottom-up. 0 unless the base cup
-    stands inside the build area."""
-    if not in_build_area(data):
-        return 0
+    """Number of cups (0..LEVELS) correctly stacked on the base, counted bottom-up."""
     n = 0
     for k in range(1, len(CUPS)):
         if not cup_stacked(data, k - 1, k):
@@ -263,12 +246,10 @@ def _add_environment(spec: mujoco.MjSpec, th: float) -> None:
                            pos=[sx * (hx - 0.05), sy * (hy - 0.05), (th - 0.04) / 2],
                            material="leg_mat", contype=0, conaffinity=0)
 
-    # Scene cameras (ALOHA naming). cam_high looks down on the table from the operator's right: straight above
-    # the workspace the single arm (based at the origin) would block the view.
-    hi_pos = [0.42, -0.6, th + 0.8]
-    wb.add_camera(name="cam_high", pos=hi_pos, xyaxes=lookat_xyaxes(hi_pos, [0.42, 0, th]), fovy=62)
-    lo_pos = [1.15, 0.0, th + 0.35]
-    wb.add_camera(name="cam_low", pos=lo_pos, xyaxes=lookat_xyaxes(lo_pos, [0.35, 0, th + 0.1]), fovy=60)
+    # Scene cameras, as in mujoco_toy-project's panda_scene.xml (there the robot base and floor are at z=0, here
+    # on the table top): front-left (+y) and front-right (-y) of the workspace, looking at the cups and gripper.
+    wb.add_camera(name="left", pos=[1.1, 0.5, th + 0.65], xyaxes=[-0.640, 0.768, 0, -0.314, -0.262, 0.913], fovy=58)
+    wb.add_camera(name="right", pos=[1.1, -0.5, th + 0.65], xyaxes=[0.640, 0.768, 0, -0.314, 0.262, 0.913], fovy=58)
 
 
 def _add_arm(spec: mujoco.MjSpec, arm: str, cfg: SimConfig) -> None:
@@ -299,15 +280,12 @@ def _add_arm(spec: mujoco.MjSpec, arm: str, cfg: SimConfig) -> None:
                 g.friction = [1.5, 0.01, 0.001]
                 g.condim, g.priority, g.solref = 4, 2, [0.004, 1]
     hand = panda.body("hand")
-    hand.add_site(name="tcp", pos=[0, 0, TCP_OFFSET], size=[0.006, 0.006, 0.006],
-                  rgba=[0, 1, 1, 0.0], group=4)
+    tcp = panda.site("tcp")  # from the toy model: midway between the fingertips
+    tcp.group = 4  # it is red and in group 1, which the recorded cameras would show
     # Grasp-point marker for the operator (headset + dashboard only, not the recorded cameras): the
     # point midway between the finger pads that the arm is steered by. The web client colours it per arm.
-    hand.add_geom(name="tcp_marker", type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[0.005, 0, 0], pos=[0, 0, TCP_OFFSET],
+    hand.add_geom(name="tcp_marker", type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[0.005, 0, 0], pos=tcp.pos,
                   rgba=[1, 1, 1, 1], group=OPERATOR_GROUP, contype=0, conaffinity=0, mass=0)
-    cam_pos = [0.1, 0.0, 0.0]
-    hand.add_camera(name="wrist_cam", pos=cam_pos,
-                    xyaxes=lookat_xyaxes(cam_pos, [0, 0, 0.16], up=[1, 0, 0]), fovy=80)
     frame = spec.worldbody.add_frame(pos=[0.0, 0.0, cfg.table_height])
     spec.attach(panda, prefix=f"{arm}_", frame=frame)
 
@@ -320,7 +298,7 @@ def build_spec(cfg: SimConfig, with_task: bool = True) -> mujoco.MjSpec:
     for arm in ARMS:
         _add_arm(spec, arm, cfg)
         spec.add_exclude(bodyname1="table", bodyname2=f"{arm}_link0")
-    spec.camera(f"{ARMS[0]}_wrist_cam").name = "cam_wrist"
+    spec.camera(f"{ARMS[0]}_wrist").name = "wrist"
     spec.option.timestep = cfg.physics_dt
     if with_task:
         _add_task(spec, cfg.table_height)
@@ -402,9 +380,6 @@ class PandaEnv:
     def progress(self) -> int:
         return stack_progress(self.model, self.data)
 
-    def in_area(self) -> bool:
-        return in_build_area(self.data)
-
     def held(self) -> dict[str, int | None]:
         return held_cups(self.model, self.data)
 
@@ -432,8 +407,8 @@ class AppearanceRandomizer:
     def __init__(self, model: mujoco.MjModel):
         self.model = model
         self.base = {k: getattr(model, k).copy() for k in self.FIELDS}
-        self.scene_cams = [model.camera(n).id for n in ("cam_high", "cam_low")]
-        self.wrist_cams = [model.camera("cam_wrist").id]
+        self.scene_cams = [model.camera(n).id for n in ("left", "right")]
+        self.wrist_cams = [model.camera("wrist").id]
         self.surface_mats = [model.material(n).id for n in ("table_mat", "floor_mat")]
         self.cup_mats = [model.material(f"{c.name}_mat").id for c in CUPS]
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "../net";
-import { cupsPlaced, drawGoal, levelStates } from "../goal";
+import { drawGoal, levelStates } from "../goal";
 import { type Arm, type EpisodeRow, fetchTask, type ServerEvent, SRC_CONTROLLER, SRC_HAND, type Status, type TaskSpec } from "../protocol";
 import { Viewer3D, type ViewerHandle } from "./Viewer3D";
 
@@ -74,7 +74,7 @@ export function App() {
             <Viewer3D handle={viewer} />
             <StateOverlay status={status} />
           </div>
-          <Cameras names={["cam_high", "cam_low", "cam_wrist"]} />
+          <Cameras names={["left", "right", "wrist"]} />
         </section>
         <aside className="col-side">
           <GoalCard task={task} status={status} />
@@ -90,7 +90,7 @@ export function App() {
 
 function GoalCard({ task, status }: { task: TaskSpec | null; status: Status | null }) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const states = task ? levelStates(task, status?.progress ?? 0, status?.in_area ?? false) : [];
+  const states = task ? levelStates(task, status?.progress ?? 0) : [];
   const key = states.join();
   useEffect(() => {
     const c = canvas.current;
@@ -102,10 +102,10 @@ function GoalCard({ task, status }: { task: TaskSpec | null; status: Status | nu
     g.clearRect(0, 0, c.width, c.height);
     drawGoal(g, task, states, { x: 0, y: 0, w: c.width, h: c.height }, 1);
   }, [task, key]); // eslint-disable-line react-hooks/exhaustive-deps
-  const done = states.filter((s) => s === "placed").length;
+  const done = states.filter((s) => s === "placed").length - 1; // stacked on the base
   return (
     <div className="card goal">
-      <div className="card-head"><h2>Goal</h2><span className="muted">{task ? `${done} / ${task.goal.length} placed` : ""}</span></div>
+      <div className="card-head"><h2>Goal</h2><span className="muted">{task ? `${done} / ${task.goal.length - 1} stacked` : ""}</span></div>
       <div className="goal-body">
         <canvas ref={canvas} />
         <ol>
@@ -115,7 +115,7 @@ function GoalCard({ task, status }: { task: TaskSpec | null; status: Status | nu
             return (
               <li key={k} className={states[k]}>
                 <i style={{ background: `rgb(${r},${g},${bl})` }} />
-                <span>{b.label}{k === 0 && <em> in the taped area</em>}</span>
+                <span>{b.label}{k === 0 && <em> on the table</em>}</span>
                 <b>{states[k] === "placed" ? "✓" : states[k] === "next" ? "next" : ""}</b>
               </li>
             );
@@ -191,7 +191,7 @@ function RecorderCard({ status, cmd }: { status: Status | null; cmd: (n: string,
       <label>Operator
         <input value={operator} onChange={(e) => setOperator(e.target.value)} onBlur={() => cmd("set_operator", { operator })} />
       </label>
-      <p className="instruction">{s?.instruction}{s && <><br /><b>Stack: {cupsPlaced(s.progress, s.in_area)} / {s.levels + 1} cups placed</b></>}</p>
+      <p className="instruction">{s?.instruction}{s && <><br /><b>Stacked: {s.progress} / {s.levels}</b></>}</p>
       <button className={`rec-btn ${rec}`} disabled={rec === "review" || !!s?.replay} onClick={() => cmd("record_toggle")}>
         <i />
         <span>{rec === "recording" ? `Stop · ${fmt(s!.elapsed)}` : rec === "countdown" ? `Starting in ${Math.ceil(s!.countdown)}…` : rec === "review" ? "Review take" : "Start recording"}</span>

@@ -6,16 +6,12 @@ import type { TaskSpec } from "./protocol";
 
 export type LevelState = "placed" | "next" | "todo";
 
-/** Per goal entry: placed (counted by the server), the next one to place, or still to do. */
-export function levelStates(task: TaskSpec, progress: number, inArea: boolean): LevelState[] {
-  const placed = task.goal.map((_, k) => (k === 0 ? inArea : inArea && k <= progress));
+/** Per goal entry: placed (the base cup just stands on the table; the others counted by the server), the next
+ * one to place, or still to do. */
+export function levelStates(task: TaskSpec, progress: number): LevelState[] {
+  const placed = task.goal.map((_, k) => k <= progress);
   const next = placed.indexOf(false);
   return placed.map((p, k) => (p ? "placed" : k === next ? "next" : "todo"));
-}
-
-/** Cups placed so far (the base counts once it is in the area), the same count as levelStates. */
-export function cupsPlaced(progress: number, inArea: boolean): number {
-  return inArea ? 1 + progress : 0;
 }
 
 type V3 = [number, number, number];
@@ -47,11 +43,9 @@ export function drawGoal(g: CanvasRenderingContext2D, task: TaskSpec, states: Le
   const { r_bottom: rb, r_top: rt, height: ch } = task.cup;
   const items = task.goal.map((e, k) => ({ k, rgba: task.cups[e.cup].rgba, pos: e.pos as V3 }));
 
-  // Fit the stack into the box. The build area is drawn as a taped square hugging the base (the real
-  // one is larger; fitting it would shrink the cups to nothing).
-  const base = items[0].pos, m = 1.35 * rt;
-  const [ax, ay] = [Math.min(task.area.half[0], m), Math.min(task.area.half[1], m)];
-  const floor: V3[] = [[-ax, -ay], [ax, -ay], [ax, ay], [-ax, ay]].map(([x, y]) => [base[0] + x, base[1] + y, base[2]]);
+  // Fit the stack (and a little table around its base) into the box.
+  const base = items[0].pos;
+  const floor = ring(base, 1.35 * rt);
   const pts = [...floor, ...items.flatMap((it) => ring([it.pos[0], it.pos[1], it.pos[2] + ch], rt))];
   const sx = pts.map((p) => dot(p, R)), sy = pts.map((p) => -dot(p, U));
   const minX = Math.min(...sx), maxX = Math.max(...sx), minY = Math.min(...sy), maxY = Math.max(...sy);
@@ -60,15 +54,10 @@ export function drawGoal(g: CanvasRenderingContext2D, task: TaskSpec, states: Le
   const P = (p: V3): [number, number] => [ox + dot(p, R) * scale, oy - dot(p, U) * scale];
   const poly = (ps: V3[]) => { g.beginPath(); ps.forEach((p, i) => (i ? g.lineTo(...P(p)) : g.moveTo(...P(p)))); g.closePath(); };
 
-  // The build area: the base cup has to stand inside this taped square.
+  // A soft shadow on the table under the base cup.
   poly(floor);
   g.fillStyle = "rgba(235,235,225,0.06)";
   g.fill();
-  g.setLineDash([10, 8]);
-  g.strokeStyle = "rgba(235,235,225,0.55)";
-  g.lineWidth = 3;
-  g.stroke();
-  g.setLineDash([]);
 
   // Bottom cup first: each nested cup covers the inside of the one below.
   for (const it of items) {

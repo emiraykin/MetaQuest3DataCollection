@@ -1,6 +1,6 @@
 # QuestCollect
 
-**Control a simulated robot arm with a Meta Quest 3, stack cups, and record every attempt as training data for
+**Control a simulated robot arm with a Meta Quest 3, put one cup on another, and record every attempt as training data for
 robot learning.**
 
 ![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)
@@ -11,7 +11,7 @@ robot learning.**
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 <p align="center">
-  <img src="docs/media/demo.gif" alt="A Franka arm picks up three cups and nests them into one stack inside a taped square" width="720">
+  <img src="docs/media/demo.gif" alt="A Franka arm picks up the green cup and puts it into the red cup" width="720">
   <br><sub>A Franka Panda arm stacks the cups. This clip is scripted by
   <a href="scripts/make_media.py">scripts/make_media.py</a>, using the same IK, gripper and physics as the headset.</sub>
 </p>
@@ -60,12 +60,12 @@ Nothing is installed on the headset: the PC serves a web page and the Quest Brow
 
 ## Quick start
 
-On Linux, with [uv](https://docs.astral.sh/uv/), Node.js ≥ 20 and git installed:
+On Linux, with [uv](https://docs.astral.sh/uv/), Node.js ≥ 20 and git installed, and **`mujoco_toy-project`
+checked out next to this repository** (the robot and the cups are imported from its `models/` folder):
 
 ```bash
 git clone https://github.com/HarunSMetin/MetaQuest3DataCollection.git
-cd MetaQuest3DataCollection
-./scripts/fetch_assets.sh                 # download the Franka Panda model
+cd MetaQuest3DataCollection                # ../mujoco_toy-project must exist (or set QC_TOY_PROJECT)
 uv sync                                   # create the Python environment
 (cd web && npm ci && npm run build)       # build the headset page and the dashboard
 uv run qc serve                           # start, then open http://localhost:8000/dashboard/
@@ -76,23 +76,17 @@ You don't need a headset for a first look: the dashboard shows the live scene an
 
 ## The task: stack the cups
 
-<p align="center"><img src="docs/media/cups.png" alt="The three cups side by side, and the finished stack" width="900"></p>
+<p align="center"><img src="docs/media/cups.png" alt="The red and the green cup side by side, and the green cup on top of the red one" width="900"></p>
 
-There are three tapered **cups** (taken from the `mujoco_toy-project` cup model), the same cups in the same colours in
-every episode; only where they start on the table changes. Your job is to nest them into **one stack**:
+There are two tapered **cups** (taken from the `mujoco_toy-project` cup model), a 🟥 **red** one and a 🟩 **green**
+one, in every episode; only where they start on the table changes. Your job: **put the green cup on top of the red
+cup**, wherever the red cup is. There is no target area on the table.
 
-| Step | Cup | Where it goes |
-| --- | --- | --- |
-| 1 (base) | 🟥 red | standing upright inside the **taped square** on the table |
-| 2 | 🟩 green | inside the red cup |
-| 3 | 🟨 yellow | inside the green cup |
+**When does it count as done?** Both cups stand upright, the green cup rests centred (within 1 cm) inside the red
+one, the gripper has let go, and both are standing still. Recording then stops on its own one second later.
 
-**When does it count as done?** The red cup stands completely inside the taped square, each cup above it rests
-upright and centred (within 1 cm) inside the one below, the gripper isn't holding a cup, and the stack is
-standing still. Recording then stops on its own one second later.
-
-The **goal panel** (in the headset and on the dashboard) shows the target stack, which cup is next and what is
-already done (✓), counting the base once it is in the square: *0 / 3* to *3 / 3*.
+The **goal panel** (in the headset and on the dashboard) shows the target, *0 / 1* until the green cup is in the red
+one, then *1 / 1*.
 
 ### What is simulated, and how closely
 
@@ -102,7 +96,6 @@ already done (✓), counting the base once it is in the square: *0 / 3* to *3 / 
 | **Stiffness** | Contacts are stiff: an arm pressing on a cup or the table doesn't sink in. |
 | **Gripper** | Like the real Franka Hand: the fingers move at 50 mm/s and squeeze with a set force (40 N by default; the real hand does up to 70 N), whatever the cup's width. |
 | **Collisions** | The arm collides with the table and the cups. A blocked arm stops; it doesn't push through, and it doesn't jump when it comes free. |
-| **The taped square** | 14 × 14 cm in the middle of the table. It is part of the scene, so the recorded cameras see it, like tape on a real table. Cups never start inside it. |
 
 ## Installation
 
@@ -132,15 +125,19 @@ curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash 
 
 ```bash
 git clone https://github.com/HarunSMetin/MetaQuest3DataCollection.git
-cd MetaQuest3DataCollection
+cd MetaQuest3DataCollection            # 1. next to your mujoco_toy-project checkout
 
-./scripts/fetch_assets.sh              # 1. Franka Panda model from MuJoCo Menagerie -> assets/third_party/
 uv sync                                # 2. Python environment (.venv/)
 (cd web && npm ci && npm run build)    # 3. headset page + dashboard -> web/dist/
 uv run qc doctor                       # 4. check that everything is in place
 ```
 
-`qc doctor` prints a ✓/✗ checklist with a hint next to anything missing. The first four items (robot model,
+The robot (`models/franka_emika_panda/panda.xml`, MuJoCo Menagerie's Panda with the toy project's TCP site and
+wrist camera) and the cup (`models/cup.xml`) are loaded from **`../mujoco_toy-project`**. If your checkout is
+somewhere else, set `QC_TOY_PROJECT=/path/to/mujoco_toy-project`. Changes to those model files show up here
+the next time you start `qc serve`.
+
+`qc doctor` prints a ✓/✗ checklist with a hint next to anything missing. The first four items (toy-project models,
 scene, rendering, web build) are all you need to start; adb, the headset and the certificate only matter for
 connecting the Quest.
 
@@ -237,7 +234,6 @@ without looking. Sounds come from the side of the arm (the right).
 | The gripper closed on a cup | one short pulse | a low *tock* |
 | You are holding a cup | a faint tick, 4 times a second | — |
 | You let go | a soft blip | a short tick |
-| The base cup was set down inside the taped square | — | a soft chime |
 | A cup came to rest in its spot on the stack | a strong **double** pulse | a two-note chime |
 | The stack is finished and standing | a long **triple** pulse | a rising arpeggio |
 | The arm touched the table | a short buzz | a thump |
@@ -254,7 +250,7 @@ ready ──A──▶ 3 s countdown ──▶ recording ──A (or 1 s after s
                                                                           └──B──▶ discarded
 ```
 
-After you save or discard, the same three cups start in new random places. **X** marks the take as a success if
+After you save or discard, the two cups start in new random places. **X** marks the take as a success if
 the stack was finished at some point during it; on the dashboard and in the wrist menu you can also save a take
 explicitly as a *success* or a *failure*.
 
@@ -264,9 +260,9 @@ explicitly as a *success* or a *failure*.
 **Tips for good demonstrations:**
 
 - Grab cups from above, just below the rim: lower down, the fingers hit the rim of the cup below when you nest them.
-- Hold each cup centred over the one below and lower it until it is about a centimetre above its resting place,
+- Hold the green cup centred over the red one and lower it until it is about a centimetre above its resting place,
   then open the gripper and let it drop in. The double pulse tells you it is in its spot.
-- Stack the same way every time (same order, similar grasps), so the dataset is consistent.
+- Do it the same way every time (similar grasps and motions), so the dataset is consistent.
 
 Episodes are saved as `data/episodes/episode_000000.hdf5`, `episode_000001.hdf5`, … (about 6 MB per minute).
 Check or replay one:
@@ -306,22 +302,23 @@ docstring at the top of [questcollect/recorder.py](questcollect/recorder.py).
 | `obs/joint_pos`, `obs/joint_vel` | (T, 7) | joint angles and velocities |
 | `obs/gripper_width` | (T, 1) | finger opening in metres (0 to 0.08) |
 | `obs/ee_pose` | (T, 7) | gripper pose: position + quaternion (w x y z), world frame |
-| `obs/objects` | (T, 3, 7) | the three cup poses (centre of each cup's bottom) |
+| `obs/objects` | (T, 2, 7) | the red and green cup poses (centre of each cup's bottom) |
 | `action/joint_pos` | (T, 8) | **[7 joints, gripper]**; gripper 0 = closed, 1 = open |
 | `action/ee_pose` | (T, 8) | where the gripper was sent: pose, gripper value |
 | `sim/state` | (T, 217) | the complete simulator state before each step |
 | `success` | (T,) | whether the stack is finished and standing |
-| `progress` | (T,) | cups correctly stacked on the base so far (0–2); useful as sub-task labels |
+| `progress` | (T,) | 1 while the green cup sits in the red one, else 0 |
 | `teleop/*` | | head pose; per hand (both, also the one without an arm) the raw controller pose and buttons or 25 hand-joint poses, pinch distances; engaged / tracked flags of the arm; latency |
 | `time`, `wall_time` | (T,) | simulation time and PC clock |
 | *file attributes* | | task, instruction, operator, input mode, success, random seed, date, duration, the full scene (MJCF), the config, camera names, and the cup definition |
 
 **Camera images are not stored while recording.** Because the complete simulator state is saved, the exporter
 replays every step exactly and renders the cameras afterwards, at whatever resolution you choose. Recording stays
-light, and you can re-export with other image sizes without recording again. The cameras follow the ALOHA
-names (`cam_high`, `cam_low`, and one wrist camera, `cam_wrist`):
+light, and you can re-export with other image sizes without recording again. The cameras are the ones from
+`mujoco_toy-project`: `left` and `right` (front-left and front-right of the workspace) and `wrist` (on the hand,
+looking along the fingers):
 
-<p align="center"><img src="docs/media/cameras.png" alt="The three recorded camera views: cam_high, cam_low, cam_wrist" width="900"></p>
+<p align="center"><img src="docs/media/cameras.png" alt="The three recorded camera views: left, right, wrist" width="900"></p>
 
 **The LeRobot dataset** contains:
 
@@ -330,7 +327,7 @@ names (`cam_high`, `cam_low`, and one wrist camera, `cam_wrist`):
 | `observation.state` | (8,) | joint angles + gripper opening (or gripper pose with `--action ee`) |
 | `action` | (8,) | `action/joint_pos` (or `action/ee_pose`) |
 | `observation.images.<camera>` | (H, W, 3) | one video per camera, re-rendered from `sim/state` |
-| `observation.environment_state` | (21,) | the three cup poses (simulation only; a real robot doesn't have these) |
+| `observation.environment_state` | (14,) | the two cup poses (simulation only; a real robot doesn't have these) |
 | `task` | text | the instruction, used as the language prompt |
 
 ## How it works
@@ -394,7 +391,6 @@ web/                       the browser side (TypeScript, three.js, React), built
   e2e/                     tests with an emulated Quest 3, and the README screenshots
 tests/                     Python tests: teleop and protocol; cup stacking, gripper, IK, recording, export
 scripts/
-  fetch_assets.sh          downloads the Franka model from MuJoCo Menagerie into assets/third_party/
   make_media.py            renders docs/media/demo.gif, cups.png, cameras.png
 docs/
   architecture.md          how the code works, for developers
@@ -402,7 +398,7 @@ docs/
 config.yaml                all runtime settings
 ```
 
-Created when you run things (all gitignored): `.venv/`, `assets/third_party/` (robot model), `web/node_modules/`,
+Created when you run things (all gitignored): `.venv/`, `web/node_modules/`,
 `web/dist/`, `certs/` (Wi-Fi certificate), `data/episodes/` (your recordings), `data/lerobot/` (exports).
 
 ## Configuration
@@ -431,8 +427,7 @@ Runtime settings live in [config.yaml](config.yaml). Use another file with `uv r
 | `server.host`, `port`, `https_port`, `cert_dir` | 0.0.0.0, 8000, 8443, `certs` | network address, ports and certificate folder |
 
 **The task** is defined by constants at the top of [questcollect/sim.py](questcollect/sim.py): the cups
-(`CUPS`: order and colour), their shape (`CUP_R_BOTTOM`, `CUP_R_TOP`, `CUP_H`, `CUP_T`, `CUP_DENSITY`), the taped
-square (`BUILD_AREA_CENTER`, `BUILD_AREA_HALF`) and the stacking tolerances (`TOL_*`, `NEST_DZ_RANGE`). The goal
+(`CUPS`: order and colour), their shape (`CUP_R_BOTTOM`, `CUP_R_TOP`, `CUP_H`, `CUP_T`, `CUP_DENSITY`) and the stacking tolerances (`TOL_*`, `NEST_DZ_RANGE`). The goal
 panels follow these automatically. The arm follows the right controller (`ARMS`). The vibration patterns are the
 `HAPTIC_*` constants in [questcollect/runtime.py](questcollect/runtime.py); the sounds are in
 [web/src/xr/sounds.ts](web/src/xr/sounds.ts).
@@ -449,7 +444,7 @@ panels follow these automatically. The arm follows the right controller (`ARMS`)
 | The grasp-point dot is red | The arm can't get there: too far from its base (more than ~0.8 m), right in front of its own base, or the wrist is twisted to its limit. Move back towards the robot or turn your wrist back. |
 | No vibration | Vibration needs the controllers; with hand tracking there is nothing to vibrate. |
 | No sound | Sound starts when you press **Enter VR** (browsers block audio before a click). Check **Sound** in the wrist menu and the headset volume. |
-| The stack is built but doesn't count | The red cup must stand completely inside the taped square, the cups must be in order (red, green, yellow) and upright, and you must let go of the last cup. The goal panel shows which step is missing. |
+| The green cup is on the red one but it doesn't count | Both cups must be upright, green must be inside red (not the other way round) and centred within 1 cm, and you must let go. |
 | A cup slips in the gripper | Raise `sim.gripper_force` in `config.yaml`. |
 | Laggy over Wi-Fi | Use the USB cable, or move closer to a 5/6 GHz access point. |
 | `EGLError` printed when a command exits | Harmless: MuJoCo's GL context is cleaned up after Python has shut down. |
@@ -484,14 +479,13 @@ protocol, and which files have to change together.
 ## Acknowledgements
 
 - Franka Emika Panda model from [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie)
-  (Apache-2.0), downloaded by `scripts/fetch_assets.sh`; not included in this repository.
+  (Apache-2.0), loaded from mujoco_toy-project's copy; not included in this repository.
 - Quest 3 Touch Plus controller models from [WebXR Input Profiles](https://github.com/immersive-web/webxr-input-profiles)
   (MIT), in `web/public/xr-profiles/`.
 - [MuJoCo](https://mujoco.org) for physics, [mink](https://github.com/kevinzakka/mink) for inverse kinematics,
   [three.js](https://threejs.org/) for rendering, [LeRobot](https://github.com/huggingface/lerobot) for the dataset
   format, and Meta's [IWER](https://github.com/meta-quest/immersive-web-emulation-runtime) for headset-free testing.
-- Camera names follow [ALOHA](https://tonyzhaozh.github.io/aloha/) / ACT.
-- The cup model comes from `mujoco_toy-project` (`models/generate_cup.py`).
+- The robot and cup models are imported from `mujoco_toy-project` (`models/`); the camera poses follow its scene.
 - Franka Hand speed and force from its published specifications.
 
 ## License

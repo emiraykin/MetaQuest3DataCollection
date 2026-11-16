@@ -21,7 +21,7 @@ export class GoalPanel {
   }
 
   update(status: Status | null) {
-    const changed = status?.progress !== this.status?.progress || status?.in_area !== this.status?.in_area;
+    const changed = status?.progress !== this.status?.progress;
     this.status = status;
     if (changed) this.panel.invalidate();
   }
@@ -34,9 +34,9 @@ export class GoalPanel {
       text(g, "Loading…", w / 2, h / 2, 30, { align: "center", color: THEME.dim });
       return;
     }
-    const states = levelStates(t, s?.progress ?? 0, s?.in_area ?? false);
-    const done = states.filter((x) => x === "placed").length;
-    text(g, `${done} / ${t.goal.length}`, w - pad, pad + 20, 34, { weight: 800, align: "right", color: done === t.goal.length ? THEME.ok : THEME.text });
+    const states = levelStates(t, s?.progress ?? 0);
+    const done = states.filter((x) => x === "placed").length - 1, total = t.goal.length - 1; // stacked on the base
+    text(g, `${done} / ${total}`, w - pad, pad + 20, 34, { weight: 800, align: "right", color: done === total ? THEME.ok : THEME.text });
 
     const listH = 44 * t.goal.length + 16;
     drawGoal(g, t, states, { x: pad, y: pad + 50, w: w - 2 * pad, h: h - 2 * pad - 50 - listH }, 1);
@@ -50,7 +50,7 @@ export class GoalPanel {
       g.globalAlpha = st === "todo" ? 0.4 : 1;
       g.fillRect(pad, y - 13, 26, 26);
       g.globalAlpha = 1;
-      const what = k === 0 ? `${b.label}  in taped area` : b.label;
+      const what = k === 0 ? `${b.label}  on the table` : b.label;
       const color = st === "placed" ? THEME.ok : st === "next" ? THEME.text : THEME.dim;
       text(g, `${k + 1}  ${what}`, pad + 40, y, 27, { weight: st === "next" ? 800 : 600, color });
       text(g, st === "placed" ? "✓" : st === "next" ? "◀" : "", w - pad, y, 26, { align: "right", weight: 800, color });

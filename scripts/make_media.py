@@ -2,8 +2,8 @@
 
     MUJOCO_GL=egl uv run python scripts/make_media.py
 
-- demo.gif      scripted stack_cups demo (IK-driven, same control stack as teleop)
-- cups.png      the three cups and the goal stack (close-ups)
+- demo.gif      scripted stack_cups demo (green into red) (IK-driven, same control stack as teleop)
+- cups.png      the two cups and the goal stack (close-ups)
 - cameras.png   the three recorded camera views (what goes into the LeRobot dataset)
 """
 
@@ -40,14 +40,13 @@ def label(img: Image.Image, text: str) -> Image.Image:
     return img
 
 
-# Deterministic demo layout: cup -> (x, y); the stack goes in the taped area in the middle of the table.
-DEMO_LAYOUT = {"red_cup": (0.36, 0.22), "green_cup": (0.56, -0.2), "yellow_cup": (0.34, -0.24)}
-DEMO_STACK = (0.45, 0.0)
+# Deterministic demo layout: cup -> (x, y). The red cup stays where it is; the green one goes into it.
+DEMO_LAYOUT = {"red_cup": (0.45, 0.05), "green_cup": (0.56, -0.2)}
 GRASP_Z = CUP_H - 0.012  # just below the rim: lower, the fingers would hit the rim of the cup below when nesting
 
 
 def stack_keys(env, ik) -> list[tuple]:
-    """Keyframes (seconds, pose, grip) that stack the cups one by one."""
+    """Keyframes (seconds, pose, grip) that put each cup into the one below it, on the red (base) cup."""
     th = env.table_height
     lift = 0.16
     home = (ik.tcp_pose("r")[0], DOWN)
@@ -63,9 +62,10 @@ def stack_keys(env, ik) -> list[tuple]:
             grip = g
         keys.append((t, pose, grip))
 
-    for k, c in enumerate(CUPS):
+    base = DEMO_LAYOUT[CUPS[0].name]
+    for k, c in enumerate(CUPS[1:], start=1):
         x, y = DEMO_LAYOUT[c.name]
-        gx, gy, gz = *DEMO_STACK, th + k * NEST_DZ
+        gx, gy, gz = *base, th + k * NEST_DZ
         key(1.2, [x, y, th + lift], DOWN)
         key(0.8, [x, y, th + GRASP_Z])
         key(0.6, g=0)
@@ -158,9 +158,9 @@ def cups_png(cfg, path: Path, size=(480, 360)) -> None:
 
     panels = [
         label(shot({c.name: [x0, 0.09 - 0.09 * i, th] for i, c in enumerate(CUPS)},
-                   free_camera(0.4, 160, -30, (x0, 0.0, th + 0.03))), "The 3 cups"),
+                   free_camera(0.4, 160, -30, (x0, 0.0, th + 0.03))), "The 2 cups"),
         label(shot({c.name: [x0, 0.0, th + i * NEST_DZ] for i, c in enumerate(CUPS)},
-                   free_camera(0.3, 150, -25, (x0, 0.0, th + 0.05))), "Goal: nested, red at the bottom"),
+                   free_camera(0.3, 150, -25, (x0, 0.0, th + 0.05))), "Goal: green on top of red"),
     ]
     renderer.close()
     sheet = Image.new("RGB", (size[0] * len(panels), size[1]))

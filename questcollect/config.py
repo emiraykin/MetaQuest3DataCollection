@@ -42,7 +42,7 @@ class RecordConfig(BaseModel):
     out_dir: str = "data/episodes"
     countdown_s: float = 3
     cameras: list[str] = Field(
-        default_factory=lambda: ["cam_high", "cam_low", "cam_wrist"]
+        default_factory=lambda: ["left", "right", "wrist"]
     )
     operator: str = "operator"
 

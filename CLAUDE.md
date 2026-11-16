@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 QuestCollect: teleoperate one simulated Franka Panda arm (MuJoCo) from a Meta Quest 3 via a WebXR page, record
-demonstrations of one task (`stack_cups`: nest 3 cups from `mujoco_toy-project` into one stack) to HDF5, export to
+demonstrations of one task (`stack_cups`: put the green cup from `mujoco_toy-project` on top of the red one) to HDF5, export to
 LeRobot. The right controller/hand drives the arm (`sim.ARMS = ("r",)`); the left controller only sends commands.
 Python 3.12 backend in a flat package (`questcollect/`, one module per pipeline stage), TypeScript/three.js/React
 frontend (`web/`). Two human docs, keep both in sync with behaviour changes: `README.md` (users: install, controls,
@@ -13,7 +13,6 @@ protocol, frames, "Common changes" table of files that change together).
 ## Commands
 
 ```bash
-./scripts/fetch_assets.sh               # Franka model from mujoco_menagerie -> assets/third_party/ (gitignored)
 uv sync                                 # add --extra export for lerobot
 (cd web && npm ci && npm run build)     # server serves web/dist; rebuild after web changes
 uv run qc doctor                        # environment checklist
@@ -53,18 +52,20 @@ binary pose frames back to headset + JSON status/events to the dashboard (`/ws/d
   `POST /api/command` → `Runtime.command` queue; don't mutate sim state from the server thread.
 - **Wire protocol**: `protocol.py` and `web/src/protocol.ts` are hand-mirrored binary layouts (little endian,
   fixed float counts, 16-byte headers). Change both together and keep `test_protocol_roundtrip` passing.
+- **Imported models**: the Panda and the cup are loaded from mujoco_toy-project's `models/` (`sim.TOY_PROJECT`, default
+  `../mujoco_toy-project`, override with `QC_TOY_PROJECT`); importing `sim` fails with a FileNotFoundError if they're
+  missing. Don't copy model geometry into this repo; adapt the loaded spec in `_add_arm` / `_add_task` instead.
 - **Scene + task**: `sim.py` builds the scene programmatically with `MjSpec` (one arm, prefix `r_`, at the middle of
-  the near table edge) and holds the one task (`CUPS` constants, `_cup_parts`, `_add_task`, `_randomize_task`,
-  `stack_progress`, `held_cups`, `_task_success`). A cup is a thin cylinder base plus a ring of thin tilted boxes
+  the near table edge) and holds the one task (`CUPS` constants, `_add_task`, `_randomize_task`,
+  `stack_progress`, `held_cups`, `_task_success`). The toy cup is a thin cylinder base plus a ring of thin tilted boxes
   (MuJoCo only collides convex shapes); body frame = centre of the cup bottom. `cup_stacked` mirrors the toy
   project's `_check_cups_stacked` (upright, xy within `TOL_XY`, height above the lower cup in `NEST_DZ_RANGE`).
   `NEST_DZ` (measured rest height of a nested cup) is only used by the goal picture.
-  Build area (`BUILD_AREA_*`, tape geoms in group 1, so cameras see it): `stack_progress` is 0 unless
-  `in_build_area` (the base cup's rim inside); `_randomize_task` never spawns cups in it. Geom group 5
+  There is no build area (the stack counts anywhere on the table). Geom group 5
   (`OPERATOR_GROUP`) = headset/dashboard-only visuals (MuJoCo cameras render groups 0–2).
-- **Goal UI is data-driven**: `sim.task_spec()` (cup shape, cups, goal placements relative to the base, area) is served at
+- **Goal UI is data-driven**: `sim.task_spec()` (cup shape, cups, goal placements relative to the base) is served at
   `GET /api/task`; `web/src/goal.ts` draws any such goal (isometric canvas) for the headset `xr/GoalPanel.ts` and the
-  dashboard Goal card, using `status.progress`/`status.in_area`. Don't hard-code the stack in the client; there is
+  dashboard Goal card, using `status.progress`. Don't hard-code the stack in the client; there is
   no reference stack in the scene.
 - **Gripper**: stiff tendon servo with `forcerange` = 2 × `sim.gripper_force` (each finger gets half the tendon force)
   and the target rate-limited to 50 mm/s per finger in `apply_action`, like the real Franka Hand. Elliptic friction
@@ -78,7 +79,7 @@ binary pose frames back to headset + JSON status/events to the dashboard (`/ws/d
   (group 5) that the client colours per arm, red while `status.out_of_reach`, with a drop line to the table.
 - **Task haptics + sounds**: `Runtime._task_feedback` emits distinct patterns (`HAPTIC_*` constants: grasp, hold tick,
   release, placed, complete); haptic events carry `repeat`/`gap_ms`, scheduled client-side in `web/src/xr/main.ts`.
-  `{"type": "sound", name, arm}` events (engage/disengage, those task events, `area`, table/out_of_reach
+  `{"type": "sound", name, arm}` events (engage/disengage, those task events, table/out_of_reach
   warnings, rate-limited by `WARN_SOUND_GAP_S`) are synthesized with WebAudio in `web/src/xr/sounds.ts` (cue names must
   match); audio is unlocked by the Enter VR click, muted via the wrist menu (localStorage).
 - **Controller visuals** (`web/src/xr/visuals.ts` `HandViz`): real Touch Plus models via three's
@@ -99,7 +100,7 @@ binary pose frames back to headset + JSON status/events to the dashboard (`/ws/d
 - **Export**: keep all LeRobot API usage in `lerobot_export.py` (lerobot is an optional extra).
   `--randomize-visuals` applies `AppearanceRandomizer` (lights, colours, camera mounts) per episode at render time.
 - **Config**: runtime tunables live in `config.yaml`, loaded into pydantic models in `config.py`. Exceptions: the task
-  definition (cup shape/colors, tolerances, build area) and `ARMS` are constants at the top of `sim.py`, and
+  definition (cup shape/colors, tolerances) and `ARMS` are constants at the top of `sim.py`, and
   the haptic patterns are `HAPTIC_*` constants in `runtime.py`.
 
 ## Design constraints

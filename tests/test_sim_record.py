@@ -9,8 +9,7 @@ from questcollect.ik import ArmIK
 from questcollect.recorder import Recorder, RecState, list_episodes, read_episode
 from questcollect.runtime import HAPTIC_COMPLETE, HAPTIC_PLACED, Runtime
 from questcollect.scene_export import export_scene
-from questcollect.sim import (BUILD_AREA_CENTER, BUILD_AREA_HALF, CUP_H, CUP_R_TOP, CUPS, HOME_Q, LEVELS, NEST_DZ,
-                              PandaEnv, set_cup_pose, task_spec)
+from questcollect.sim import CUP_H, CUPS, HOME_Q, LEVELS, NEST_DZ, PandaEnv, set_cup_pose, task_spec
 
 
 @pytest.fixture(scope="module")
@@ -52,28 +51,17 @@ def test_stack_complete_is_success(env):
     assert np.allclose(dz, NEST_DZ, atol=0.003), "cups must nest, not stand on each other"
 
 
-def test_stack_outside_build_area_does_not_count(env):
-    """The same stack next to the taped area is not progress; the rim poking over the tape is enough."""
-    _stack(env, (0.45, 0.25))
-    assert not env.in_area() and env.progress() == 0 and not env.success()
-    edge = BUILD_AREA_CENTER[0] + BUILD_AREA_HALF[0] - CUP_R_TOP + 0.003  # base pokes 3 mm out
-    _stack(env, (edge, 0.0))
-    assert not env.in_area() and env.progress() == 0
+def test_stack_counts_anywhere_on_the_table(env):
+    """There is no build area: the stack counts wherever the red cup stands."""
+    for xy in ((0.35, 0.25), (0.6, -0.2)):
+        _stack(env, xy)
+        assert env.progress() == LEVELS and env.success()
 
 
-def test_cup_beside_the_stack_does_not_count(env):
+def test_cup_beside_the_base_does_not_count(env):
     """A cup standing next to the base (not inside it) isn't stacked."""
     _stack(env, (0.45, 0.0), offset=(0.0, 0.1))
-    assert env.progress() == 1 and not env.success()
-
-
-def test_cups_never_start_in_build_area(env):
-    for seed in range(30):
-        env.reset(seed=seed)
-        for c in CUPS:
-            xy = env.data.body(c.name).xpos[:2]
-            gap = np.maximum(np.abs(xy - BUILD_AREA_CENTER) - BUILD_AREA_HALF, 0)
-            assert np.linalg.norm(gap) > 0.02, (seed, c.name)
+    assert env.progress() == 0 and not env.success()
 
 
 def test_task_spec_describes_goal():
@@ -81,12 +69,12 @@ def test_task_spec_describes_goal():
     spec = task_spec()
     assert [g["cup"] for g in spec["goal"]] == list(range(len(CUPS)))
     assert [g["pos"][2] for g in spec["goal"]] == pytest.approx([k * NEST_DZ for k in range(len(CUPS))])
-    assert spec["area"]["center"] == list(BUILD_AREA_CENTER)
+    assert "area" not in spec
     assert len(spec["cups"]) == len(CUPS) and spec["cup"]["height"] == CUP_H
 
 
 def test_wrong_order_is_not_success(env):
-    _stack(env, (0.45, 0.0), order=[0, 2, 1])  # yellow and green swapped
+    _stack(env, (0.45, 0.0), order=[1, 0])  # red in green
     assert env.progress() == 0 and not env.success()
 
 
@@ -262,7 +250,7 @@ def test_lerobot_export(cfg, env, tmp_path):
     assert ds.num_episodes == 2 and ds.num_frames == 24 and ds.fps == cfg.sim.control_hz
     item = ds[0]
     assert item["observation.state"].shape == (8,) and item["action"].shape == (8,)
-    assert item["observation.images.cam_high"].shape == (3, 96, 128)
+    assert item["observation.images.left"].shape == (3, 96, 128)
     assert item["observation.environment_state"].shape == (7 * len(CUPS),)
 
 
@@ -281,4 +269,4 @@ def test_stack_haptics(cfg):
     assert pulses.count(HAPTIC_PLACED) == LEVELS  # no holder recorded -> the arm's hand
     assert pulses.count(HAPTIC_COMPLETE) == 1
     sounds = [e["name"] for e in events if e["type"] == "sound"]
-    assert sounds.count("placed") == LEVELS and sounds.count("complete") == 1 and sounds.count("area") == 1
+    assert sounds.count("placed") == LEVELS and sounds.count("complete") == 1 and "area" not in sounds
