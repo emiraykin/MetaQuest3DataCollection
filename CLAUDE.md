@@ -52,16 +52,20 @@ binary pose frames back to headset + JSON status/events to the dashboard (`/ws/d
   `POST /api/command` → `Runtime.command` queue; don't mutate sim state from the server thread.
 - **Wire protocol**: `protocol.py` and `web/src/protocol.ts` are hand-mirrored binary layouts (little endian,
   fixed float counts, 16-byte headers). Change both together and keep `test_protocol_roundtrip` passing.
-- **Imported scene**: `build_spec` loads mujoco_toy-project's `models/panda_scene.xml` (`sim.TOY_PROJECT`, default
-  `../mujoco_toy-project`, override with `QC_TOY_PROJECT`), drops its floor and attaches it on the table top with the
-  toy's names (`panda_*` via `ARM_PREFIX`, `green_cup`, `red_cup`, camera `front`). Importing `sim` fails with a
-  FileNotFoundError if the files are missing. Don't copy model geometry into this repo; change the toy scene, or
-  adapt the loaded spec in `_adapt_arm` / `_adapt_cups`.
+- **mujoco_toy-project** is a uv path dependency (`toy-project`, editable, `../mujoco_toy-project`; both Python 3.12,
+  same mujoco/mink versions). `sim.py` imports `toy_project.manipulation_environment as toy` for the names
+  (`ROBOT_PREFIX` → `ARM_PREFIX`, `JNT_NAMES`, `JNT_RESET_QPOS` = `HOME_Q`, `OBJECT_NAMES` → `CUPS`, `CAMERA_NAMES`),
+  the reset randomization (`reset_arm`, `reset_object_positions` with `origin` = table top) and `check_cups_stacked`.
+  Don't duplicate those here; change them in the toy project.
+- **Imported scene**: `build_spec` loads the toy's `models/panda_scene.xml` as the root spec (not attached: attaching
+  with an empty prefix breaks `to_xml`), drops its floor, raises it by the table height (`_raise_scene`) and adds
+  the table. Don't copy model geometry into this repo; change the toy scene, or adapt the loaded spec in
+  `_adapt_arm` / `_adapt_cups`.
 - **Scene + task**: `sim.py` builds the scene programmatically with `MjSpec` (the toy scene's arm at the middle of
-  the near table edge) and holds the one task (`CUPS` constants, `_adapt_cups`, `_randomize_task`,
+  the near table edge) and holds the one task (`CUPS` constants, `_adapt_cups`,
   `stack_progress`, `held_cups`, `_task_success`). The toy cup is a thin cylinder base plus a ring of thin tilted boxes
-  (MuJoCo only collides convex shapes); body frame = centre of the cup bottom. `cup_stacked` mirrors the toy
-  project's `_check_cups_stacked` (upright, xy within `TOL_XY`, height above the lower cup in `NEST_DZ_RANGE`).
+  (MuJoCo only collides convex shapes); body frame = centre of the cup bottom. `cup_stacked` calls the toy
+  project's `check_cups_stacked`.
   `NEST_DZ` (measured rest height of a nested cup) is only used by the goal picture.
   There is no build area (the stack counts anywhere on the table). Geom group 5
   (`OPERATOR_GROUP`) = headset/dashboard-only visuals (MuJoCo cameras render groups 0–2).

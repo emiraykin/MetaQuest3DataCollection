@@ -1,13 +1,13 @@
 [project]
 name = "questcollect"
 version = "0.1.0"
-description = "Meta Quest 3 teleoperation + data collection for bimanual Franka in MuJoCo"
+description = "Meta Quest 3 teleoperation + data collection for mujoco_toy-project's Franka scene in MuJoCo"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "mujoco>=3.2",
-    "mink>=0.0.5",
+    "mujoco>=3.17,<4",  # same major version as mujoco_toy-project (3.17)
+    "mink>=1.4",
     "numpy>=1.26",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
@@ -18,6 +18,8 @@ dependencies = [
     "pillow>=10.0",
     "daqp>=0.5",
     "fast-simplification>=0.2.0",
+    # The scene, task names, reset randomization and success check (sibling checkout, see [tool.uv.sources]).
+    "toy-project",
 ]
 
 [project.optional-dependencies]
@@ -38,6 +40,9 @@ packages = ["questcollect"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.uv.sources]
+toy-project = { path = "../mujoco_toy-project", editable = true }
 
 [tool.uv]
 # lerobot -> pynput -> evdev needs a C compiler; only lerobot's keyboard teleop uses it, never dataset export.

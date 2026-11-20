@@ -74,7 +74,7 @@ export function App() {
             <Viewer3D handle={viewer} />
             <StateOverlay status={status} />
           </div>
-          <Cameras names={["front", "left", "right", "wrist"]} />
+          <Cameras names={status?.cameras ?? []} />
         </section>
         <aside className="col-side">
           <GoalCard task={task} status={status} />

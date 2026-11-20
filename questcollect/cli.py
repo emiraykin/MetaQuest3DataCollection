@@ -209,12 +209,10 @@ def doctor():
             return False
 
     cfg = load_config()
-    try:
-        from questcollect.sim import TOY_PROJECT, PandaEnv
-    except FileNotFoundError as e:
-        row(False, "mujoco_toy-project models", str(e))
-        raise typer.Exit(1)
-    row(True, f"mujoco_toy-project models ({TOY_PROJECT})")
+    from questcollect.sim import SCENE_XML, TOY_PROJECT, PandaEnv
+
+    row(SCENE_XML.exists(), f"mujoco_toy-project scene ({SCENE_XML.relative_to(TOY_PROJECT.parent)})",
+        "check out the mujoco_toy-project branch with models/panda_scene.xml, then uv sync")
     env = PandaEnv(cfg)
     row(True, f"scene compiles ({env.model.nbody} bodies, {env.model.nu} actuators)")
     row(render_ok(env.model), f"offscreen rendering (MUJOCO_GL={os.environ['MUJOCO_GL']})",

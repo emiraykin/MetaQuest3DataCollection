@@ -456,6 +456,7 @@ class Runtime:
             "held": {a: (None if b is None else CUPS[b].name) for a, b in self._held.items()},
             "operator": self.cfg.record.operator,
             "arms": list(ARMS),
+            "cameras": list(self.cfg.record.cameras),
             "engaged": {a: bool(out.engaged[a]) for a in ARMS} if out else {a: False for a in ARMS},
             "tracked": {a: bool(out.tracked[a]) for a in ARMS} if out else {a: False for a in ARMS},
             "mode_mismatch": bool(out.mode_mismatch) if out else False,

@@ -27,7 +27,7 @@ ik:
 record:
   out_dir: data/episodes
   countdown_s: 3
-  cameras: [front, left, right, wrist]
+  # cameras: [left, panda_wrist, right]   # default: mujoco_toy-project's CAMERA_NAMES
   operator: operator
 
 server:

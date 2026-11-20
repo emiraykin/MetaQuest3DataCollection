@@ -155,10 +155,14 @@ than 3 cm away from what the IK can reach, the arm is flagged *out of reach*.
 
 [questcollect/sim.py](../questcollect/sim.py) builds everything in code with `MjSpec`:
 
-- **Imported scene.** `build_spec` loads mujoco_toy-project's `models/panda_scene.xml` (`TOY_PROJECT`:
-  `../mujoco_toy-project`, or `QC_TOY_PROJECT`) with `MjSpec.from_file`, deletes its floor (`gym_gym`), and
-  attaches the rest (Panda, cups, `front` camera) on a frame at the table top, keeping the toy's names. Then
-  `_adapt_arm` / `_adapt_cups` apply the teleop settings below. Cup dimensions (`CUP_R_BOTTOM`, `CUP_R_TOP`,
+- **mujoco_toy-project.** A uv path dependency (`toy-project`, editable from `../mujoco_toy-project`); `sim.py` imports
+  `toy_project.manipulation_environment as toy` and uses its names (`ROBOT_PREFIX`, `JNT_NAMES`, `JNT_RESET_QPOS`,
+  `OBJECT_NAMES`, `CAMERA_NAMES`), its reset randomization (`reset_arm`, `reset_object_positions`) and its stacking
+  check (`check_cups_stacked`). `config.py` takes the default `record.cameras` from `CAMERA_NAMES`.
+- **Imported scene.** `build_spec` loads the toy's `models/panda_scene.xml` as the root spec, deletes its floor
+  (`gym_gym`), raises everything in it by the table height (`_raise_scene`) and adds the table. It isn't attached into
+  another spec: that keeps the toy's names exactly and lets the spec save to XML that loads again (`model_xml` in
+  every episode). Then `_adapt_arm` / `_adapt_cups` apply the teleop settings below. Cup dimensions (`CUP_R_BOTTOM`, `CUP_R_TOP`,
   `CUP_H`) are measured from `cup_green.xml`, the cup colours read from the toy's cup files.
 - **Robot.** One Franka Panda arm (Menagerie's, with the toy project's `tcp` site and `wrist` camera; names
   `panda_*` from the toy scene, `ARM_PREFIX["r"]`, driven by the right controller) at the
@@ -172,12 +176,14 @@ than 3 cm away from what the IK can reach, the arm is flagged *out of reach*.
   colour come from the toy's cup files; `_adapt_cups` only renames the free joints and sets contact priority/stiffness. Nested, a cup rests `NEST_DZ` (33 mm) above the one below.
 - **Contacts.** Stiff contact parameters (`RIGID_SOLREF`, `RIGID_SOLIMP`), elliptic friction cones and
   `impratio` 10, so the arm doesn't sink into things and grasps don't creep.
-- **Progress and success.** `stack_progress` counts cups, bottom-up, that rest upright (`TOL_TILT`) inside the
-  one below: centred within `TOL_XY` and `NEST_DZ_RANGE` above it, the same check as the toy project's
-  `_check_cups_stacked`. There is no build area: it counts anywhere on the table. With the two cups (green base,
+- **Reset.** `PandaEnv.reset` calls the toy's `reset_arm` (start pose plus ±0.25 rad noise per joint) and
+  `reset_object_positions` (cups at random spots in front of the base, with `origin` at the table top), with a
+  seeded generator so `env.seed` reproduces the episode start.
+- **Progress and success.** `stack_progress` counts cups, bottom-up, for which the toy's `check_cups_stacked` holds
+  (upright, centred within 1 cm and resting inside the one below). There is no build area: it counts anywhere on the table. With the two cups (green base,
   red on top) it is 0 or 1. `_task_success` = all cups stacked, nothing held, and every cup slower than 2 cm/s.
-- **Cameras.** `front` (from the toy scene), `left`, `right` (front-left / front-right of the workspace, added here)
-  and `wrist` (on the hand, from the toy's Panda). Geom group 5
+- **Cameras.** The toy scene's `left`, `right` and `panda_wrist` (on the hand). The dashboard shows `status.cameras`
+  (= `record.cameras`). Geom group 5
   (`OPERATOR_GROUP`) holds visuals only the operator sees (grasp-point markers); MuJoCo cameras render groups 0–2,
   so these never reach the recorded images.
 

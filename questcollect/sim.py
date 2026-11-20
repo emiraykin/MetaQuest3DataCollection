@@ -1,8 +1,9 @@
 """The MuJoCo side: scene (one Franka arm + table + cups), the stack_cups task, and the environment.
 
-The scene is mujoco_toy-project's models/panda_scene.xml (robot, cups, front camera), imported as it is and set on
-a table: this module adds the table, the left/right cameras and the settings teleoperation needs (gripper servo,
-contacts, grasp marker). Names stay as in the toy scene (panda_*, green_cup, red_cup).
+Built on mujoco_toy-project (the `toy_project` package, a uv path dependency): its models/panda_scene.xml (robot,
+cups, cameras) is imported as it is and set on a table, and its names, reset randomization and cup stacking check
+are used as they are. This module adds the table and the settings teleoperation needs (gripper servo, contacts,
+grasp marker).
 
 World frame: z up, +x points away from the operator (towards the far table edge),
 +y is the operator's left. The arm base sits on the near table edge facing +x.
@@ -11,30 +12,26 @@ World frame: z up, +x points away from the operator (towards the far table edge)
 from __future__ import annotations
 
 import io
-import os
 from pathlib import Path
 from typing import NamedTuple
 
 import mujoco
 import numpy as np
+import toy_project
 from PIL import Image
+from toy_project import manipulation_environment as toy
 
-from questcollect.config import ROOT, Config, SimConfig
+from questcollect.config import Config, SimConfig
 
-# mujoco_toy-project checkout whose models are imported; by default the sibling folder of this repository.
-TOY_PROJECT = Path(os.environ.get("QC_TOY_PROJECT", ROOT.parent / "mujoco_toy-project")).resolve()
+# The mujoco_toy-project checkout the package was installed from (src/toy_project -> repository root).
+TOY_PROJECT = Path(toy_project.__file__).resolve().parents[2]
 SCENE_XML = TOY_PROJECT / "models" / "panda_scene.xml"
-CUP_XML = TOY_PROJECT / "models" / "cup_green.xml"  # both cups have this shape; used to measure it
-for _f in (SCENE_XML, CUP_XML):
-    if not _f.exists():
-        raise FileNotFoundError(f"{_f} not found: clone mujoco_toy-project next to this repository "
-                                "or set QC_TOY_PROJECT to its folder")
 
 # One arm, driven by the operator's right hand/controller (the left controller only sends commands).
 ARMS = ("r",)
-ARM_PREFIX = {"r": "panda_"}  # name prefix of that arm's bodies/joints/actuators in the toy scene
-ARM_JOINTS = [f"joint{i}" for i in range(1, 8)]
-HOME_Q = np.array([0.0, -0.3, 0.0, -2.2, 0.0, 1.9, 0.785])
+ARM_PREFIX = {"r": toy.ROBOT_PREFIX}  # name prefix of that arm's bodies/joints/actuators in the toy scene
+ARM_JOINTS = [n.removeprefix(toy.ROBOT_PREFIX) for n in toy.JNT_NAMES]
+HOME_Q = toy.JNT_RESET_QPOS  # the toy's start pose; its reset adds random noise to it
 GRIPPER_CTRL_MAX = 255.0  # Menagerie's ctrl range: 0 = closed, 255 = fully open
 # Gripper like the real Franka Hand (70 N continuous, 140 N peak, 50 mm/s per finger, 80 mm stroke):
 # a stiff position servo on the finger tendon whose force is capped at the configured grasp force, so
@@ -51,16 +48,20 @@ CYL = mujoco.mjtGeom.mjGEOM_CYLINDER
 OPERATOR_GROUP = 5       # geom group MuJoCo cameras don't render (they show 0-2): headset/dashboard only
 
 # -- task: stack_cups ------------------------------------------------------------------------------
-# The toy scene's two cups (models/cup_green.xml, cup_red.xml; start positions randomized): the operator puts the
-# red one on top of (into) the green one, anywhere on the table. Cup body frames sit at the centre of the cup
-# bottom. MuJoCo only collides convex shapes, so the toy cup is a thin cylinder base plus a ring of thin tilted
-# boxes.
+# The toy scene's cups (toy.OBJECT_NAMES, bottom to top; models/cup_<colour>.xml; start positions randomized by the
+# toy's reset): the operator puts each one on top of (into) the one before it, anywhere on the table. Cup body
+# frames sit at the centre of the cup bottom. MuJoCo only collides convex shapes, so the toy cup is a thin
+# cylinder base plus a ring of thin tilted boxes.
 TASK = "stack_cups"
+
+
+def _cup_xml(name: str) -> Path:
+    return TOY_PROJECT / "models" / f"cup_{name.split('_')[0]}.xml"
 
 
 def _cup_dims() -> tuple[float, float, float]:
     """(outer radius at the bottom, at the rim, height) of the toy cup, measured from its geoms."""
-    m = mujoco.MjSpec.from_file(str(CUP_XML)).compile()
+    m = mujoco.MjSpec.from_file(str(_cup_xml(toy.OBJECT_NAMES[0]))).compile()
     d = mujoco.MjData(m)
     mujoco.mj_forward(m, d)
     corners = []
@@ -87,25 +88,18 @@ class Cup(NamedTuple):
         return f"{self.name.split('_')[0]} cup"
 
 
-def _cup_rgba(color: str) -> tuple[float, float, float, float]:
-    m = mujoco.MjSpec.from_file(str(TOY_PROJECT / "models" / f"cup_{color}.xml")).compile()
+def _cup_rgba(name: str) -> tuple[float, float, float, float]:
+    m = mujoco.MjSpec.from_file(str(_cup_xml(name))).compile()
     return tuple(float(v) for v in m.geom_rgba[0])
 
 
-# Bottom to top; body names as in the toy scene.
-CUPS = (
-    Cup("green_cup", _cup_rgba("green")),
-    Cup("red_cup", _cup_rgba("red")),
-)
+# Bottom to top; body names and order from the toy project.
+CUPS = tuple(Cup(name, _cup_rgba(name)) for name in toy.OBJECT_NAMES)
 LEVELS = len(CUPS) - 1   # cups stacked on the base cup
 OBJECTS = tuple(c.name for c in CUPS)  # free-floating bodies whose poses are recorded
 INSTRUCTION = f"Put the {CUPS[1].label} on top of the {CUPS[0].label}."
 # Height of a nested cup above the one below, measured in the sim with the toy cup. Only the goal picture uses it.
 NEST_DZ = 0.033
-# Stacked: upright, centred on the cup below and resting inside it (as in mujoco_toy-project).
-TOL_TILT = np.deg2rad(15)
-TOL_XY = 0.01
-NEST_DZ_RANGE = (0.005, 0.05)
 STACK_STILL_MPS = 0.02
 
 # Rigid contacts (cups, arm links, table top): timeconst 0.004 s (>= 2 * physics_dt for stability) and
@@ -143,34 +137,16 @@ def set_cup_pose(data: mujoco.MjData, name: str, pos) -> None:
     j.qvel[:] = 0
 
 
-def _randomize_task(model: mujoco.MjModel, data: mujoco.MjData, rng: np.random.Generator, th: float) -> None:
-    """Same cups every episode; only where they start on the table changes (non-overlapping, within reach of
-    the arm)."""
-    placed: list[np.ndarray] = []
-    r = CUP_R_TOP
-    for c in CUPS:
-        for _ in range(1000):
-            xy = np.array([rng.uniform(0.30, 0.60), rng.uniform(-0.30, 0.30)])
-            if all(np.linalg.norm(xy - p) > 2 * r + 0.03 for p in placed):
-                break
-        placed.append(xy)
-        set_cup_pose(data, c.name, [*xy, th])
-
-
-def cup_stacked(data: mujoco.MjData, lower: int, upper: int) -> bool:
-    """Whether cup `upper` rests upright inside cup `lower`."""
-    bl, bu = data.body(CUPS[lower].name), data.body(CUPS[upper].name)
-    if bl.xmat[8] < np.cos(TOL_TILT) or bu.xmat[8] < np.cos(TOL_TILT):  # z axis . world z
-        return False
-    d = bu.xpos - bl.xpos
-    return bool(np.linalg.norm(d[:2]) < TOL_XY and NEST_DZ_RANGE[0] < d[2] < NEST_DZ_RANGE[1])
+def cup_stacked(model: mujoco.MjModel, data: mujoco.MjData, lower: int, upper: int) -> bool:
+    """Whether cup `upper` rests upright inside cup `lower`: the toy project's check."""
+    return toy.check_cups_stacked(model, data, CUPS[lower].name, CUPS[upper].name)
 
 
 def stack_progress(model: mujoco.MjModel, data: mujoco.MjData) -> int:
     """Number of cups (0..LEVELS) correctly stacked on the base, counted bottom-up."""
     n = 0
     for k in range(1, len(CUPS)):
-        if not cup_stacked(data, k - 1, k):
+        if not cup_stacked(model, data, k - 1, k):
             break
         n = k
     return n
@@ -246,12 +222,7 @@ def _add_environment(spec: mujoco.MjSpec, th: float) -> None:
             table.add_geom(type=BOX, size=[0.025, 0.025, (th - 0.04) / 2],
                            pos=[sx * (hx - 0.05), sy * (hy - 0.05), (th - 0.04) / 2],
                            material="leg_mat", contype=0, conaffinity=0)
-
-    # Extra cameras front-left (+y) and front-right (-y) of the workspace, looking at the cups and gripper (poses from
-    # mujoco_toy-project's kinect branch, where robot and floor are at z=0; here on the table top). The toy scene
-    # brings its own `front` camera and the `wrist` camera on the hand.
-    wb.add_camera(name="left", pos=[1.1, 0.5, th + 0.65], xyaxes=[-0.640, 0.768, 0, -0.314, -0.262, 0.913], fovy=58)
-    wb.add_camera(name="right", pos=[1.1, -0.5, th + 0.65], xyaxes=[0.640, 0.768, 0, -0.314, 0.262, 0.913], fovy=58)
+    # The cameras come with the toy scene (toy.CAMERA_NAMES).
 
 
 def _adapt_arm(spec: mujoco.MjSpec, arm: str, cfg: SimConfig) -> None:
@@ -294,23 +265,31 @@ def _adapt_arm(spec: mujoco.MjSpec, arm: str, cfg: SimConfig) -> None:
                                      mass=0)
 
 
+def _raise_scene(spec: mujoco.MjSpec, dz: float) -> None:
+    """Move everything placed directly in the world up by dz (the toy scene stands on z=0, here on the table)."""
+    wb = spec.worldbody
+    for el in (*wb.frames, *[b for b in wb.bodies if b.frame is None], *wb.cameras, *wb.lights, *wb.geoms, *wb.sites):
+        el.pos = [el.pos[0], el.pos[1], el.pos[2] + dz]
+
+
 def build_spec(cfg: SimConfig, with_task: bool = True) -> mujoco.MjSpec:
-    """The toy scene on the table, with (optionally) the cups."""
-    spec = mujoco.MjSpec()
+    """The toy scene on the table, with (optionally) the cups.
+
+    The toy scene is the root spec (not attached into another one), so every name stays exactly as in the toy
+    project and the scene saves to XML that loads again (episodes store it as model_xml).
+    """
+    spec = mujoco.MjSpec.from_file(str(SCENE_XML))
     spec.modelname = "panda_cups"
-    _add_environment(spec, cfg.table_height)
-    spec.option.timestep = cfg.physics_dt
-    toy = mujoco.MjSpec.from_file(str(SCENE_XML))
-    toy.delete(toy.body("gym_gym"))  # the toy's floor plane and light: here the table and its room take their place
+    spec.delete(spec.body("gym_gym"))  # the toy's floor plane and light: here the table and its room take their place
     if not with_task:
         for c in CUPS:
-            toy.delete(toy.body(c.name))
-    toy.compile()  # namespaces the Panda's keyframe before attaching
-    spec.attach(toy, prefix="", frame=spec.worldbody.add_frame(pos=[0.0, 0.0, cfg.table_height]))
+            spec.delete(spec.body(c.name))
+    _raise_scene(spec, cfg.table_height)
+    _add_environment(spec, cfg.table_height)
+    spec.option.timestep = cfg.physics_dt
     for arm in ARMS:
         _adapt_arm(spec, arm, cfg)
         spec.add_exclude(bodyname1="table", bodyname2=f"{ARM_PREFIX[arm]}link0")
-    spec.camera(f"{ARM_PREFIX[ARMS[0]]}wrist").name = "wrist"
     if with_task:
         _adapt_cups(spec)
     return spec
@@ -347,14 +326,17 @@ class PandaEnv:
         self.seed = int(seed) if seed is not None else int(np.random.SeedSequence().entropy % (2**31))
         rng = np.random.default_rng(self.seed)
         mujoco.mj_resetData(self.model, self.data)
+        # The toy project's reset randomization: arm = its start pose plus noise, cups at random spots in front of
+        # the base. The toy scene sits on the table, so its origin is the table top under the arm base.
+        m = self.model
+        toy.reset_arm(m, self.data, rng, [m.joint(f"{ARM_PREFIX[a]}{j}").id for a in ARMS for j in ARM_JOINTS])
+        toy.reset_object_positions(m, self.data, rng, [m.body(c.name).id for c in CUPS],
+                                   origin=np.array([0.0, 0.0, self.table_height]))
         for arm in ARMS:
-            for j, q in zip(ARM_JOINTS, HOME_Q):
-                self.data.joint(f"{ARM_PREFIX[arm]}{j}").qpos[0] = q
             for f in ("finger_joint1", "finger_joint2"):
                 self.data.joint(f"{ARM_PREFIX[arm]}{f}").qpos[0] = 0.04
-        _randomize_task(self.model, self.data, rng, self.table_height)
         self.data.ctrl[self.grip_act] = GRIPPER_CTRL_MAX  # fingers start open
-        self.apply_action(np.tile(HOME_Q, len(ARMS)), np.ones(len(ARMS)))
+        self.apply_action(self.data.qpos[self.arm_qadr].copy(), np.ones(len(ARMS)))  # hold the start pose
         mujoco.mj_forward(self.model, self.data)
         return self.observe()
 
@@ -418,9 +400,9 @@ class AppearanceRandomizer:
     def __init__(self, model: mujoco.MjModel):
         self.model = model
         self.base = {k: getattr(model, k).copy() for k in self.FIELDS}
-        self.scene_cams = [model.camera(n).id for n in ("left", "right")]
-        self.wrist_cams = [model.camera("wrist").id]
-        self.scene_cams.append(model.camera("front").id)
+        on_robot = [n.startswith(toy.ROBOT_PREFIX) for n in toy.CAMERA_NAMES]
+        self.scene_cams = [model.camera(n).id for n, r in zip(toy.CAMERA_NAMES, on_robot) if not r]
+        self.wrist_cams = [model.camera(n).id for n, r in zip(toy.CAMERA_NAMES, on_robot) if r]
         self.surface_mats = [model.material(n).id for n in ("table_mat", "floor_mat")]
         self.cup_geoms = [g for g in range(model.ngeom) if model.geom_bodyid[g] in {model.body(c.name).id for c in CUPS}]
 

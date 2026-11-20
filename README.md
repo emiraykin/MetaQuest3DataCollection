@@ -65,7 +65,7 @@ checked out next to this repository** (the robot and the cups are imported from 
 
 ```bash
 git clone https://github.com/HarunSMetin/MetaQuest3DataCollection.git
-cd MetaQuest3DataCollection                # ../mujoco_toy-project must exist (or set QC_TOY_PROJECT)
+cd MetaQuest3DataCollection                # ../mujoco_toy-project must exist (uv installs it from there)
 uv sync                                   # create the Python environment
 (cd web && npm ci && npm run build)       # build the headset page and the dashboard
 uv run qc serve                           # start, then open http://localhost:8000/dashboard/
@@ -79,8 +79,9 @@ You don't need a headset for a first look: the dashboard shows the live scene an
 <p align="center"><img src="docs/media/cups.png" alt="The green and the red cup side by side, and the red cup on top of the green one" width="900"></p>
 
 The scene is **`mujoco_toy-project`'s `models/panda_scene.xml`**, imported as it is: the Panda and two tapered
-cups, a 🟩 **green** one and a 🟥 **red** one (the toy's `cup_green.xml` / `cup_red.xml`). Only where the cups start
-on the table changes per episode. Your job: **put the red cup on top of the green cup**, wherever the green cup
+cups, a 🟩 **green** one and a 🟥 **red** one (the toy's `cup_green.xml` / `cup_red.xml`). Each episode starts like
+the toy project's `ManipulationEnv.reset()`: the arm at the toy's start pose plus a little random noise, and the cups
+at random spots in front of it (the toy's `reset_arm` / `reset_object_positions`, called from here). Your job: **put the red cup on top of the green cup**, wherever the green cup
 is. There is no target area on the table.
 
 **When does it count as done?** Both cups stand upright, the red cup rests centred (within 1 cm) inside the green
@@ -133,10 +134,12 @@ uv sync                                # 2. Python environment (.venv/)
 uv run qc doctor                       # 4. check that everything is in place
 ```
 
-The scene (`models/panda_scene.xml`: MuJoCo Menagerie's Panda with the toy project's TCP site and wrist camera,
-the green and red cup, and a `front` camera) is loaded from **`../mujoco_toy-project`** and set on a table. If your checkout is
-somewhere else, set `QC_TOY_PROJECT=/path/to/mujoco_toy-project`. Changes to those model files show up here
-the next time you start `qc serve`.
+QuestCollect is built on **`mujoco_toy-project`**: `uv sync` installs it as the `toy_project` Python package from
+`../mujoco_toy-project` (editable, a path dependency in `pyproject.toml`; both projects use Python 3.12). From it
+QuestCollect takes the scene (`models/panda_scene.xml`: MuJoCo Menagerie's Panda with the toy's TCP site and wrist
+camera, the green and red cup, the `left` / `right` cameras), the names (`ROBOT_PREFIX`, `OBJECT_NAMES`,
+`CAMERA_NAMES`), the reset randomization and the cup stacking check. Changes in the toy project show up here the
+next time you start `qc serve`; if your checkout is somewhere else, change the path in `[tool.uv.sources]`.
 
 `qc doctor` prints a ✓/✗ checklist with a hint next to anything missing. The first four items (toy-project models,
 scene, rendering, web build) are all you need to start; adb, the headset and the certificate only matter for
@@ -315,11 +318,11 @@ docstring at the top of [questcollect/recorder.py](questcollect/recorder.py).
 
 **Camera images are not stored while recording.** Because the complete simulator state is saved, the exporter
 replays every step exactly and renders the cameras afterwards, at whatever resolution you choose. Recording stays
-light, and you can re-export with other image sizes without recording again. The cameras: `front` and `wrist`
-(on the hand, looking along the fingers) come with the toy scene; `left` and `right` (front-left and front-right of
-the workspace) are added here:
+light, and you can re-export with other image sizes without recording again. The cameras are the toy project's
+`CAMERA_NAMES`: `left` and `right` (in front of the workspace, to the left and right) and `panda_wrist` (on the hand,
+looking along the fingers):
 
-<p align="center"><img src="docs/media/cameras.png" alt="The four recorded camera views: front, left, right, wrist" width="900"></p>
+<p align="center"><img src="docs/media/cameras.png" alt="The recorded camera views: left, right, panda_wrist" width="900"></p>
 
 **The LeRobot dataset** contains:
 
@@ -423,12 +426,12 @@ Runtime settings live in [config.yaml](config.yaml). Use another file with `uv r
 | `ik.iterations` | 2 | IK solver iterations per control step |
 | `record.out_dir` | `data/episodes` | where episodes are saved |
 | `record.countdown_s` | 3 | countdown before recording starts (s) |
-| `record.cameras` | the four cameras | cameras shown on the dashboard and exported |
+| `record.cameras` | the toy's `CAMERA_NAMES` | cameras shown on the dashboard and exported |
 | `record.operator` | `operator` | default operator name stored in episodes |
 | `server.host`, `port`, `https_port`, `cert_dir` | 0.0.0.0, 8000, 8443, `certs` | network address, ports and certificate folder |
 
 **The task** is defined by constants at the top of [questcollect/sim.py](questcollect/sim.py): the cups
-(`CUPS`: order and colour), their shape (`CUP_R_BOTTOM`, `CUP_R_TOP`, `CUP_H`, `CUP_T`, `CUP_DENSITY`) and the stacking tolerances (`TOL_*`, `NEST_DZ_RANGE`). The goal
+(`CUPS`: order and colour), their shape (`CUP_R_BOTTOM`, `CUP_R_TOP`, `CUP_H`, `CUP_T`, `CUP_DENSITY`) The stacking check and the reset randomization live in the toy project (`toy_project.manipulation_environment`). The goal
 panels follow these automatically. The arm follows the right controller (`ARMS`). The vibration patterns are the
 `HAPTIC_*` constants in [questcollect/runtime.py](questcollect/runtime.py); the sounds are in
 [web/src/xr/sounds.ts](web/src/xr/sounds.ts).
@@ -486,7 +489,7 @@ protocol, and which files have to change together.
 - [MuJoCo](https://mujoco.org) for physics, [mink](https://github.com/kevinzakka/mink) for inverse kinematics,
   [three.js](https://threejs.org/) for rendering, [LeRobot](https://github.com/huggingface/lerobot) for the dataset
   format, and Meta's [IWER](https://github.com/meta-quest/immersive-web-emulation-runtime) for headset-free testing.
-- The scene (robot, cups, front camera) is imported from `mujoco_toy-project` (`models/panda_scene.xml`).
+- The scene, names, reset randomization and stacking check come from `mujoco_toy-project` (`toy_project` package).
 - Franka Hand speed and force from its published specifications.
 
 ## License

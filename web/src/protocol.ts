@@ -120,6 +120,7 @@ export interface Status {
   levels: number;
   /** Robot arms, each driven by the controller/hand of that side; per-arm maps below only have these keys. */
   arms: Arm[];
+  cameras: string[]; // camera previews (record.cameras, by default mujoco_toy-project's)
   held: Partial<Record<Arm, string | null>>;
   operator: string;
   engaged: Partial<Record<Arm, boolean>>;

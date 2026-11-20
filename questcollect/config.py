@@ -6,6 +6,7 @@ from pathlib import Path
 
 import yaml
 from pydantic import BaseModel, Field
+from toy_project import manipulation_environment as toy
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = ROOT / "config.yaml"
@@ -42,7 +43,7 @@ class RecordConfig(BaseModel):
     out_dir: str = "data/episodes"
     countdown_s: float = 3
     cameras: list[str] = Field(
-        default_factory=lambda: ["front", "left", "right", "wrist"]
+        default_factory=lambda: list(toy.CAMERA_NAMES)  # mujoco_toy-project's cameras
     )
     operator: str = "operator"
 
